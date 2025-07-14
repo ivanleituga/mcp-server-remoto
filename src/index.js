@@ -176,30 +176,35 @@ app.post(['/', '/mcp'], async (req, res) => {
     // Handle methods
     let result;
     switch (method) {
-      case 'tools/list':
+    case 'tools/list':
         result = { tools };
         break;
         
-      case 'tools/call':
+    case 'tools/call':
         result = await executeTool(params.name, params.arguments);
         break;
         
-      case 'logging/setLevel':
+    case 'logging/setLevel':
         result = {};
         break;
         
-      default:
+    case 'notifications/initialized':
+        // O Claude envia isso após inicializar
+        result = {};
+        break;
+        
+    default:
         res.json({
-          jsonrpc: '2.0',
-          error: {
+        jsonrpc: '2.0',
+        error: {
             code: -32601,
             message: `Method not found: ${method}`
-          },
-          id
+        },
+        id
         });
         return;
     }
-    
+
     res.json({
       jsonrpc: '2.0',
       result,
