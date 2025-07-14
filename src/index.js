@@ -1,77 +1,93 @@
-const express = require('express');
-const cors = require('cors');
+const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
+const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} = require('@modelcontextprotocol/sdk/types.js');
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// Versão do servidor - você pode incrementar isso a cada atualização
-const SERVER_VERSION = '1.0.0';
-
-// Ferramenta Hello World simples
-async function helloWorld(args) {
-  const name = args.name || 'Mundo';
-  return {
-    success: true,
-    data: `Olá, ${name}! Este é um MCP Server remoto!`,
-    version: SERVER_VERSION
-  };
-}
-
-// Endpoint principal
-app.post('/mcp/execute', async (req, res) => {
-  try {
-    const { tool, arguments: args } = req.body;
-    
-    let result;
-    
-    switch (tool) {
-      case 'hello_world':
-        result = await helloWorld(args || {});
-        break;
-        
-      default:
-        throw new Error(`Ferramenta desconhecida: ${tool}`);
-    }
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Erro:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      version: SERVER_VERSION
-    });
+// Criar o servidor MCP
+const server = new Server(
+  {
+    name: 'mcp-server-remoto',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
   }
-});
+);
 
-// Listar ferramentas disponíveis
-app.get('/mcp/tools', (req, res) => {
-  res.json({
-    version: SERVER_VERSION,
+// Registrar a ferramenta hello_world
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
     tools: [
       {
         name: 'hello_world',
-        description: 'Retorna uma mensagem de Hello World',
-        parameters: {
-          name: 'string (opcional) - Nome para cumprimentar'
-        }
-      }
-    ]
-  });
+        description: 'Retorna uma mensagem de boas-vindas',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Nome para cumprimentar',
+            },
+          },
+          required: ['name'],
+        },
+      },
+      {
+        name: 'test_connection',
+        description: 'Testa a conexão com o servidor MCP',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+    ],
+  };
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    server: 'mcp-hello-world',
-    version: SERVER_VERSION,
-    timestamp: new Date().toISOString()
-  });
+// Implementar as ferramentas
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  switch (name) {
+    case 'hello_world':
+      const userName = args.name || 'Mundo';
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Olá, ${userName}! 👋 Sou o MCP Server Remoto e estou funcionando perfeitamente!`,
+          },
+        ],
+      };
+
+    case 'test_connection':
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `✅ Conexão estabelecida com sucesso! Servidor MCP Remoto está online e pronto para uso.`,
+          },
+        ],
+      };
+
+    default:
+      throw new Error(`Ferramenta desconhecida: ${name}`);
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`MCP Server v${SERVER_VERSION} rodando na porta ${PORT}`);
+// Função principal assíncrona
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('MCP Server Remoto iniciado via stdio');
+}
+
+// Tratamento de erros
+main().catch((error) => {
+  console.error('Erro ao iniciar servidor:', error);
+  process.exit(1);
 });

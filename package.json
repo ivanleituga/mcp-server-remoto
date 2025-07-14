@@ -1,15 +1,19 @@
 {
-  "name": "remote-mcp-reate",
+  "name": "mcp-server-remoto",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Servidor MCP remoto para ferramentas ANP",
+  "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "start:stdio": "node src/index.js --stdio"
   },
-  "keywords": [],
+  "keywords": [
+    "mcp",
+    "server",
+    "anp"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
@@ -20,5 +24,12 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "mcp": {
+    "name": "mcp-server-remoto",
+    "description": "Servidor MCP remoto para ferramentas ANP"
   }
 }
