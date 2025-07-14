@@ -76,6 +76,77 @@ async function executeTool(toolName, args = {}) {
   }
 }
 
+// ===== INSPECTOR COMPATIBILITY - ROOT ENDPOINTS =====
+// O Inspector espera SSE no endpoint raiz quando transportType=sse
+app.get('/', (req, res) => {
+  // Se for uma requisição SSE do Inspector
+  if (req.headers.accept === 'text/event-stream') {
+    console.log('[Inspector] SSE request detected on root path');
+    
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    
+    const sessionId = uuidv4();
+    const endpoint = `/messages?sessionId=${sessionId}`;
+    
+    // Send endpoint event
+    res.write(`event: endpoint\n`);
+    res.write(`data: "${endpoint}"\n\n`);
+    
+    transports[sessionId] = {
+      type: 'sse',
+      sessionId,
+      response: res,
+      createdAt: new Date()
+    };
+    
+    // Keep alive
+    const keepAlive = setInterval(() => {
+      res.write(':keepalive\n\n');
+    }, 30000);
+    
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      delete transports[sessionId];
+      console.log(`[Inspector] SSE connection closed: ${sessionId}`);
+    });
+    
+  } else {
+    // Para requisições normais, retornar JSON
+    res.json({
+      name: serverInfo.name,
+      version: serverInfo.version,
+      protocols: {
+        'streamable-http': {
+          endpoint: '/mcp',
+          protocolVersion: '2025-03-26'
+        },
+        'sse': {
+          endpoint: '/',
+          messagesEndpoint: '/messages',
+          protocolVersion: '2024-11-05'
+        }
+      }
+    });
+  }
+});
+
+// Para Streamable HTTP, o Inspector também pode esperar no raiz
+app.post('/', async (req, res) => {
+  // Se for uma requisição JSON-RPC, redirecionar para /mcp
+  if (req.body && req.body.jsonrpc) {
+    console.log('[Inspector] Redirecting POST / to /mcp');
+    req.url = '/mcp';
+    app._router.handle(req, res);
+  } else {
+    res.status(404).json({ error: 'Not found' });
+  }
+});
+
 // ===== STREAMABLE HTTP TRANSPORT (NEW PROTOCOL) =====
 app.all('/mcp', async (req, res) => {
   console.log(`[Streamable] ${req.method} /mcp - Session: ${req.headers['mcp-session-id'] || 'none'}`);
@@ -327,43 +398,29 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/', (req, res) => {
-  res.json({
-    name: serverInfo.name,
-    version: serverInfo.version,
-    protocols: {
-      'streamable-http': {
-        endpoint: '/mcp',
-        protocolVersion: '2025-03-26'
-      },
-      'sse': {
-        endpoint: '/sse',
-        messagesEndpoint: '/messages',
-        protocolVersion: '2024-11-05'
-      }
-    }
-  });
-});
-
 // ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
 ===============================================
-MCP Server Remoto - Backwards Compatible
+MCP Server Remoto - Inspector Compatible
 Port: ${PORT}
 ===============================================
 Supported protocols:
 
 1. Streamable HTTP (2025-03-26) - NEW
-   POST /mcp - Initialize session
+   POST / or /mcp - Initialize session
    GET  /mcp - SSE stream (with session)
    POST /mcp - Send requests (with session)
    DELETE /mcp - Close session
 
 2. HTTP+SSE (2024-11-05) - LEGACY
-   GET  /sse - Establish SSE connection
+   GET  / or /sse - Establish SSE connection
    POST /messages?sessionId=xxx - Send requests
+
+Inspector endpoints:
+   SSE: https://mcp-server-remoto.onrender.com
+   Streamable: https://mcp-server-remoto.onrender.com
 ===============================================
   `);
 });
