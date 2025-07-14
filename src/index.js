@@ -1,235 +1,139 @@
 const express = require('express');
 const cors = require('cors');
+const { v4: uuidv4 } = require('uuid'); // Precisamos instalar isso
 
 const app = express();
-
-// Configuração CORS mais permissiva
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  
-  next();
-});
-
+app.use(cors());
 app.use(express.json());
 
-// Log detalhado de todas as requisições para debug
-app.use((req, res, next) => {
-  console.log(`
-=== Requisição Recebida ===
-Timestamp: ${new Date().toISOString()}
-Method: ${req.method}
-Path: ${req.path}
-Headers: ${JSON.stringify(req.headers, null, 2)}
-Body: ${JSON.stringify(req.body, null, 2)}
-===========================
-  `);
-  next();
-});
+// Armazenar conexões SSE por sessionId
+const sseConnections = new Map();
+const sessionData = new Map();
 
-// ===== ENDPOINTS DE ATIVAÇÃO E STATUS =====
+// Função para enviar eventos SSE
+function sendSSE(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
 
-// Endpoint de status - CRÍTICO para mostrar como "Ativado"
-app.get('/status', (req, res) => {
-  res.json({
-    status: 'active',
-    ready: true,
-    version: '1.0.0',
-    capabilities: {
-      tools: true
-    }
+// ===== ENDPOINT SSE PRINCIPAL =====
+app.get('/sse', (req, res) => {
+  console.log('Nova conexão SSE estabelecida');
+  
+  // Configurar headers para SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+
+  // Gerar sessionId único
+  const sessionId = uuidv4();
+  
+  // Enviar evento endpoint com sessionId
+  sendSSE(res, 'endpoint', `/messages?sessionId=${sessionId}`);
+  
+  // Armazenar conexão
+  sseConnections.set(sessionId, res);
+  sessionData.set(sessionId, {
+    connected: true,
+    startTime: new Date()
+  });
+
+  // Manter conexão viva
+  const keepAlive = setInterval(() => {
+    res.write(':keepalive\n\n');
+  }, 30000);
+
+  // Limpar quando a conexão fechar
+  req.on('close', () => {
+    console.log(`Conexão SSE fechada: ${sessionId}`);
+    clearInterval(keepAlive);
+    sseConnections.delete(sessionId);
+    sessionData.delete(sessionId);
   });
 });
 
-// Endpoint de ativação
-app.post('/activate', (req, res) => {
-  console.log('Servidor sendo ativado pelo Claude');
-  res.json({
-    status: 'activated',
-    message: 'MCP-server-remoto ativado com sucesso'
-  });
-});
-
-// Endpoint de capabilities
-app.get('/capabilities', (req, res) => {
-  res.json({
-    version: '1.0.0',
-    tools: {
-      supported: true,
-      count: 2
-    },
-    protocol: {
-      json_rpc: '2.0',
-      mcp: '1.0'
-    }
-  });
-});
-
-// Endpoint alternativo de manifesto
-app.get('/manifest', (req, res) => {
-  res.json({
-    name: 'MCP-server-remoto',
-    version: '1.0.0',
-    status: 'active',
-    tools: [
-      {
-        name: 'hello_world',
-        enabled: true
+// ===== ENDPOINT PARA MENSAGENS =====
+app.post('/messages', async (req, res) => {
+  const sessionId = req.query.sessionId;
+  
+  if (!sessionId || !sseConnections.has(sessionId)) {
+    return res.status(404).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Session not found'
       },
-      {
-        name: 'test_connection',
-        enabled: true
-      }
-    ]
-  });
-});
+      id: req.body.id
+    });
+  }
 
-// WebSocket fallback (alguns conectores esperam isso)
-app.get('/ws', (req, res) => {
-  res.status(426).json({
-    error: 'WebSocket not implemented',
-    message: 'Use JSON-RPC over HTTP instead'
-  });
-});
+  const sseRes = sseConnections.get(sessionId);
+  const { jsonrpc, method, params, id } = req.body;
 
-// ===== PROTOCOLO DE DESCOBERTA =====
+  console.log(`Mensagem recebida [${sessionId}]: ${method}`);
 
-// Manifesto de descoberta - CRÍTICO para o Claude
-app.get('/.well-known/mcp.json', (req, res) => {
-  res.json({
-    "mcpVersion": "1.0",
-    "name": "MCP-server-remoto",
-    "description": "Servidor MCP remoto para testes",
-    "iconUrl": null,
-    "capabilities": {
-      "tools": true,
-      "prompts": false,
-      "resources": false
-    },
-    "tools": [
-      {
-        "name": "mcp-server-remoto__hello_world",
-        "description": "Retorna uma mensagem de boas-vindas",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "Nome para cumprimentar"
-            }
-          },
-          "required": ["name"]
-        }
-      },
-      {
-        "name": "mcp-server-remoto__test_connection",
-        "description": "Testa a conexão com o servidor",
-        "inputSchema": {
-          "type": "object",
-          "properties": {}
-        }
-      }
-    ]
-  });
-});
-
-// ===== ENDPOINTS JSON-RPC =====
-
-// Endpoint principal JSON-RPC
-app.post('/', async (req, res) => {
   try {
-    const { jsonrpc, method, params, id } = req.body;
-    
-    // Validar JSON-RPC
-    if (jsonrpc !== '2.0') {
-      return res.json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32600,
-          message: 'Invalid Request: must be JSON-RPC 2.0'
-        },
-        id: id || null
-      });
-    }
-    
-    console.log(`Método chamado: ${method}`);
-    
+    let result;
+
     switch (method) {
       case 'initialize':
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            protocolVersion: '1.0',
-            capabilities: {
-              tools: {
-                listChanged: false
+        result = {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: {},
+            logging: {}
+          },
+          serverInfo: {
+            name: 'mcp-server-remoto',
+            version: '1.0.0'
+          }
+        };
+        break;
+
+      case 'tools/list':
+        result = {
+          tools: [
+            {
+              name: 'hello_world',
+              description: 'Retorna uma mensagem de boas-vindas',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                    description: 'Nome para cumprimentar'
+                  }
+                },
+                required: ['name']
               }
             },
-            serverInfo: {
-              name: 'MCP-server-remoto',
-              version: '1.0.0'
-            }
-          },
-          id
-        });
-        break;
-        
-      case 'tools/list':
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            tools: [
-              {
-                name: 'mcp-server-remoto__hello_world',
-                description: 'Retorna uma mensagem de boas-vindas',
-                inputSchema: {
-                  type: 'object',
-                  properties: {
-                    name: {
-                      type: 'string',
-                      description: 'Nome para cumprimentar'
-                    }
-                  },
-                  required: ['name']
-                }
-              },
-              {
-                name: 'mcp-server-remoto__test_connection',
-                description: 'Testa a conexão com o servidor',
-                inputSchema: {
-                  type: 'object',
-                  properties: {}
-                }
+            {
+              name: 'test_connection',
+              description: 'Testa a conexão com o servidor',
+              inputSchema: {
+                type: 'object',
+                properties: {}
               }
-            ]
-          },
-          id
-        });
+            }
+          ]
+        };
         break;
-        
+
       case 'tools/call':
         const toolName = params.name;
         const args = params.arguments || {};
         
         console.log(`Executando ferramenta: ${toolName}`);
         
-        let result;
-        
-        // Aceitar tanto com quanto sem prefixo
-        const normalizedToolName = toolName.replace('mcp-server-remoto__', '');
-        
-        switch (normalizedToolName) {
+        switch (toolName) {
           case 'hello_world':
             result = {
               content: [{
                 type: 'text',
-                text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto e estou funcionando perfeitamente!`
+                text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto funcionando via SSE!`
               }]
             };
             break;
@@ -238,10 +142,7 @@ app.post('/', async (req, res) => {
             result = {
               content: [{
                 type: 'text',
-                text: `✅ Conexão estabelecida com sucesso! 
-Servidor: MCP-server-remoto
-Status: Online
-Timestamp: ${new Date().toISOString()}`
+                text: `✅ Conexão SSE estabelecida com sucesso!\nServidor: MCP-server-remoto\nProtocolo: SSE (2024-11-05)\nSessionId: ${sessionId}\nTimestamp: ${new Date().toISOString()}`
               }]
             };
             break;
@@ -250,30 +151,21 @@ Timestamp: ${new Date().toISOString()}`
             return res.json({
               jsonrpc: '2.0',
               error: {
-                code: -32602,
+                code: -32601,
                 message: `Ferramenta não encontrada: ${toolName}`
               },
               id
             });
         }
-        
-        res.json({
-          jsonrpc: '2.0',
-          result,
-          id
-        });
         break;
-        
-      case 'ping':
-        res.json({
-          jsonrpc: '2.0',
-          result: { status: 'pong' },
-          id
-        });
+
+      case 'logging/setLevel':
+        // Implementar se necessário
+        result = {};
         break;
-        
+
       default:
-        res.json({
+        return res.json({
           jsonrpc: '2.0',
           error: {
             code: -32601,
@@ -282,54 +174,70 @@ Timestamp: ${new Date().toISOString()}`
           id
         });
     }
+
+    // Enviar resposta de sucesso
+    res.json({
+      jsonrpc: '2.0',
+      result,
+      id
+    });
+
+    // Se for uma ferramenta que pode enviar notificações
+    if (method === 'tools/call' && params.name === 'test_connection') {
+      // Exemplo de como enviar uma notificação via SSE
+      setTimeout(() => {
+        if (sseConnections.has(sessionId)) {
+          sendSSE(sseRes, 'message', {
+            jsonrpc: '2.0',
+            method: 'notifications/message',
+            params: {
+              level: 'info',
+              message: 'Notificação de teste enviada 2 segundos após a execução'
+            }
+          });
+        }
+      }, 2000);
+    }
+
   } catch (error) {
-    console.error('Erro:', error);
+    console.error('Erro ao processar mensagem:', error);
     res.json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
         message: error.message
       },
-      id: req.body.id || null
+      id
     });
   }
 });
 
 // ===== ENDPOINTS AUXILIARES =====
 
-// Health check atualizado
+// Health check
 app.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'healthy',
-    active: true,  // Importante para ativação
-    ready: true,   // Importante para ativação
-    server: 'MCP-server-remoto',
+    protocol: 'SSE',
+    protocolVersion: '2024-11-05',
+    server: 'mcp-server-remoto',
     version: '1.0.0',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    endpoints: {
-      discovery: '/.well-known/mcp.json',
-      jsonrpc: '/',
-      health: '/health',
-      status: '/status'
-    }
+    activeSessions: sseConnections.size,
+    timestamp: new Date().toISOString()
   });
 });
 
-// Página inicial atualizada
+// Página principal
 app.get('/', (req, res) => {
   res.json({
     name: 'MCP-server-remoto',
-    status: 'active',  // IMPORTANTE: status como 'active'
-    version: '1.0.0',
-    ready: true,       // IMPORTANTE: ready como true
-    message: 'Servidor MCP ativo e pronto',
+    protocol: 'SSE (Server-Sent Events)',
+    protocolVersion: '2024-11-05',
     endpoints: {
-      discovery: '/.well-known/mcp.json',
-      jsonrpc: 'POST /',
-      status: '/status',
+      sse: '/sse',
+      messages: '/messages?sessionId={sessionId}',
       health: '/health',
-      capabilities: '/capabilities'
+      test: '/test'
     }
   });
 });
@@ -340,81 +248,119 @@ app.get('/test', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>MCP Server Test</title>
+      <title>MCP SSE Server Test</title>
       <style>
-        body { font-family: Arial; margin: 20px; max-width: 800px; }
+        body { font-family: Arial; margin: 20px; max-width: 1000px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
         button { margin: 5px; padding: 10px 20px; cursor: pointer; }
         button:hover { background: #e0e0e0; }
         pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; }
-        .success { color: green; }
-        .error { color: red; }
-        input { margin: 5px; padding: 5px; }
-        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .connected { color: green; }
+        .disconnected { color: red; }
+        #events { max-height: 300px; overflow-y: auto; }
+        .event { margin: 5px 0; padding: 5px; background: #f0f0f0; }
       </style>
     </head>
     <body>
-      <h1>MCP-server-remoto - Teste Interativo</h1>
+      <h1>MCP SSE Server - Teste</h1>
       
       <div class="section">
-        <h3>1. Status e Ativação</h3>
-        <button onclick="testStatus()">Status</button>
-        <button onclick="testActivate()">Activate</button>
-        <button onclick="testCapabilities()">Capabilities</button>
-        <button onclick="testManifest()">Manifest</button>
+        <h3>Status da Conexão SSE</h3>
+        <p>Status: <span id="status" class="disconnected">Desconectado</span></p>
+        <p>Session ID: <span id="sessionId">-</span></p>
+        <p>Endpoint: <span id="endpoint">-</span></p>
+        <button onclick="connect()">Conectar SSE</button>
+        <button onclick="disconnect()">Desconectar</button>
       </div>
-      
+
       <div class="section">
-        <h3>2. Descoberta</h3>
-        <button onclick="testDiscovery()">Discovery (.well-known)</button>
-        <button onclick="testHealth()">Health Check</button>
+        <h3>Testar Protocolo MCP</h3>
+        <button onclick="initialize()" disabled>Initialize</button>
+        <button onclick="listTools()" disabled>Listar Ferramentas</button>
+        <button onclick="testHelloWorld()" disabled>Hello World</button>
+        <button onclick="testConnection()" disabled>Test Connection</button>
       </div>
-      
+
       <div class="section">
-        <h3>3. Protocolo JSON-RPC</h3>
-        <button onclick="testInitialize()">Initialize</button>
-        <button onclick="testListTools()">Listar Ferramentas</button>
-        <button onclick="testPing()">Ping</button>
+        <h3>Eventos SSE Recebidos</h3>
+        <div id="events"></div>
       </div>
-      
+
       <div class="section">
-        <h3>4. Ferramentas</h3>
-        <div>
-          <input type="text" id="nameInput" placeholder="Seu nome" value="Teste">
-          <button onclick="testHelloWorld()">Hello World</button>
-        </div>
-        <button onclick="testConnection()">Test Connection</button>
+        <h3>Última Resposta</h3>
+        <pre id="response">Conecte-se primeiro...</pre>
       </div>
-      
-      <h3>Resposta:</h3>
-      <pre id="response">Clique em um botão para testar...</pre>
-      
+
       <script>
-        async function testEndpoint(url, method = 'GET', body = null) {
-          try {
-            const options = {
-              method: method,
-              headers: { 'Content-Type': 'application/json' }
-            };
-            if (body) options.body = JSON.stringify(body);
-            
-            const response = await fetch(url, options);
-            const data = await response.json();
-            showResponse(data, response.ok);
-          } catch (error) {
-            showResponse({ error: error.message }, false);
+        let eventSource = null;
+        let currentEndpoint = null;
+        let currentSessionId = null;
+
+        function connect() {
+          if (eventSource) {
+            eventSource.close();
           }
+
+          eventSource = new EventSource('/sse');
+          
+          eventSource.addEventListener('endpoint', (e) => {
+            const endpoint = JSON.parse(e.data);
+            currentEndpoint = endpoint;
+            currentSessionId = endpoint.split('sessionId=')[1];
+            document.getElementById('endpoint').textContent = endpoint;
+            document.getElementById('sessionId').textContent = currentSessionId;
+            addEvent('Endpoint recebido: ' + endpoint);
+            
+            // Habilitar botões
+            document.querySelectorAll('button[disabled]').forEach(btn => btn.disabled = false);
+          });
+
+          eventSource.addEventListener('message', (e) => {
+            const data = JSON.parse(e.data);
+            addEvent('Mensagem: ' + JSON.stringify(data));
+          });
+
+          eventSource.onopen = () => {
+            document.getElementById('status').textContent = 'Conectado';
+            document.getElementById('status').className = 'connected';
+            addEvent('Conexão SSE estabelecida');
+          };
+
+          eventSource.onerror = (e) => {
+            document.getElementById('status').textContent = 'Erro/Desconectado';
+            document.getElementById('status').className = 'disconnected';
+            addEvent('Erro na conexão SSE');
+          };
         }
-        
-        function testStatus() { testEndpoint('/status'); }
-        function testActivate() { testEndpoint('/activate', 'POST'); }
-        function testCapabilities() { testEndpoint('/capabilities'); }
-        function testManifest() { testEndpoint('/manifest'); }
-        function testDiscovery() { testEndpoint('/.well-known/mcp.json'); }
-        function testHealth() { testEndpoint('/health'); }
-        
-        async function sendRPC(method, params = {}) {
+
+        function disconnect() {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          document.getElementById('status').textContent = 'Desconectado';
+          document.getElementById('status').className = 'disconnected';
+          document.querySelectorAll('button:not(:first-child)').forEach(btn => btn.disabled = true);
+          addEvent('Desconectado');
+        }
+
+        function addEvent(message) {
+          const events = document.getElementById('events');
+          const event = document.createElement('div');
+          event.className = 'event';
+          event.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+          events.appendChild(event);
+          events.scrollTop = events.scrollHeight;
+        }
+
+        async function sendMessage(method, params = {}) {
+          if (!currentEndpoint) {
+            alert('Não conectado!');
+            return;
+          }
+
           try {
-            const response = await fetch('/', {
+            const response = await fetch(currentEndpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -424,37 +370,22 @@ app.get('/test', (req, res) => {
                 id: Date.now()
               })
             });
+            
             const data = await response.json();
-            showResponse(data, !data.error);
+            document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+            return data;
           } catch (error) {
-            showResponse({ error: error.message }, false);
+            document.getElementById('response').textContent = 'Erro: ' + error.message;
           }
         }
-        
-        function showResponse(data, success) {
-          const pre = document.getElementById('response');
-          pre.textContent = JSON.stringify(data, null, 2);
-          pre.className = success ? 'success' : 'error';
-        }
-        
-        function testInitialize() { sendRPC('initialize'); }
-        function testListTools() { sendRPC('tools/list'); }
-        function testPing() { sendRPC('ping'); }
-        
+
+        function initialize() { sendMessage('initialize'); }
+        function listTools() { sendMessage('tools/list'); }
         function testHelloWorld() {
-          const name = document.getElementById('nameInput').value;
-          sendRPC('tools/call', {
-            name: 'mcp-server-remoto__hello_world',
-            arguments: { name }
-          });
+          const name = prompt('Digite seu nome:') || 'Teste';
+          sendMessage('tools/call', { name: 'hello_world', arguments: { name } });
         }
-        
-        function testConnection() {
-          sendRPC('tools/call', {
-            name: 'mcp-server-remoto__test_connection',
-            arguments: {}
-          });
-        }
+        function testConnection() { sendMessage('tools/call', { name: 'test_connection' }); }
       </script>
     </body>
     </html>
@@ -467,26 +398,25 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
 ===============================================
-MCP-server-remoto v1.0.0
+MCP SSE Server Remoto
+Protocolo: Server-Sent Events (2024-11-05)
 Porta: ${PORT}
-Status: ATIVO
 ===============================================
-Endpoints disponíveis:
-- GET  /                     (informações)
-- GET  /status              (status do servidor)
-- POST /activate            (ativação)
-- GET  /capabilities        (capacidades)
-- GET  /manifest            (manifesto)
-- GET  /.well-known/mcp.json (descoberta)
-- POST /                    (JSON-RPC)
-- GET  /health              (health check)
-- GET  /test                (página de teste)
+Endpoints:
+- GET  /sse      (conexão SSE)
+- POST /messages (mensagens JSON-RPC)
+- GET  /health   (health check)
+- GET  /test     (página de teste)
 ===============================================
   `);
 });
 
-// Manter o processo vivo
+// Limpar conexões ao desligar
 process.on('SIGINT', () => {
-  console.log('Servidor finalizado');
+  console.log('\nDesligando servidor...');
+  sseConnections.forEach((res, sessionId) => {
+    console.log(`Fechando conexão: ${sessionId}`);
+    res.end();
+  });
   process.exit(0);
 });
