@@ -5,163 +5,178 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configuração do servidor
-const SERVER_INFO = {
-  name: 'mcp-server-remoto',
-  version: '1.0.0',
-  description: 'Servidor MCP remoto para ferramentas ANP'
-};
+// ===== IMPLEMENTAÇÃO PARA CONECTOR PERSONALIZADO DO CLAUDE =====
 
-// ===== ENDPOINTS NECESSÁRIOS PARA O CLAUDE =====
-
-// 1. Endpoint de descoberta (OBRIGATÓRIO)
-app.get('/.well-known/mcp/manifest.json', (req, res) => {
-  res.json({
-    name: SERVER_INFO.name,
-    version: SERVER_INFO.version,
-    description: SERVER_INFO.description,
-    tools: [
-      {
-        name: 'hello_world',
-        description: 'Retorna uma mensagem de boas-vindas',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: {
-              type: 'string',
-              description: 'Nome para cumprimentar'
+// Endpoint principal que o Claude chama
+app.post('/', async (req, res) => {
+  try {
+    console.log('Requisição recebida:', JSON.stringify(req.body, null, 2));
+    
+    const { method, params, id } = req.body;
+    
+    // Roteamento baseado no método JSON-RPC
+    switch (method) {
+      case 'initialize':
+        res.json({
+          jsonrpc: '2.0',
+          result: {
+            protocolVersion: '2024-11-05',
+            capabilities: {
+              tools: {}
+            },
+            serverInfo: {
+              name: 'mcp-server-remoto',
+              version: '1.0.0'
             }
           },
-          required: ['name']
-        }
-      },
-      {
-        name: 'test_connection',
-        description: 'Testa a conexão com o servidor',
-        inputSchema: {
-          type: 'object',
-          properties: {}
-        }
-      }
-    ]
-  });
-});
-
-// 2. Endpoint principal do MCP (OBRIGATÓRIO)
-app.post('/mcp/v1/invoke', async (req, res) => {
-  try {
-    const { tool, arguments: args } = req.body;
-    
-    console.log(`Ferramenta chamada: ${tool}`, args);
-    
-    let result;
-    
-    switch (tool) {
-      case 'hello_world':
-        const name = args?.name || 'Mundo';
-        result = {
-          content: [
-            {
-              type: 'text',
-              text: `Olá, ${name}! 👋 Sou o MCP Server Remoto e estou funcionando perfeitamente!`
-            }
-          ]
-        };
+          id
+        });
         break;
         
-      case 'test_connection':
-        result = {
-          content: [
-            {
+      case 'tools/list':
+        res.json({
+          jsonrpc: '2.0',
+          result: {
+            tools: [
+              {
+                name: 'hello_world',
+                description: 'Retorna uma mensagem de boas-vindas',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    name: {
+                      type: 'string',
+                      description: 'Nome para cumprimentar'
+                    }
+                  },
+                  required: ['name']
+                }
+              },
+              {
+                name: 'test_connection',
+                description: 'Testa a conexão com o servidor',
+                inputSchema: {
+                  type: 'object',
+                  properties: {},
+                  required: []
+                }
+              }
+            ]
+          },
+          id
+        });
+        break;
+        
+      case 'tools/call':
+        const toolName = params.name;
+        const args = params.arguments || {};
+        
+        console.log(`Chamando ferramenta: ${toolName}`, args);
+        
+        let content;
+        
+        switch (toolName) {
+          case 'hello_world':
+            content = [{
+              type: 'text',
+              text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto e estou funcionando perfeitamente!`
+            }];
+            break;
+            
+          case 'test_connection':
+            content = [{
               type: 'text',
               text: '✅ Conexão estabelecida com sucesso! Servidor MCP Remoto está online e pronto para uso.'
-            }
-          ]
-        };
+            }];
+            break;
+            
+          default:
+            res.json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32601,
+                message: `Ferramenta desconhecida: ${toolName}`
+              },
+              id
+            });
+            return;
+        }
+        
+        res.json({
+          jsonrpc: '2.0',
+          result: {
+            content,
+            isError: false
+          },
+          id
+        });
         break;
         
       default:
-        return res.status(404).json({
-          error: `Ferramenta desconhecida: ${tool}`
+        console.log(`Método não implementado: ${method}`);
+        res.json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32601,
+            message: `Método não encontrado: ${method}`
+          },
+          id
         });
     }
-    
-    res.json(result);
   } catch (error) {
-    console.error('Erro ao executar ferramenta:', error);
-    res.status(500).json({ 
-      error: error.message 
+    console.error('Erro no processamento:', error);
+    res.json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: error.message
+      },
+      id: req.body.id
     });
   }
 });
 
-// 3. Listar ferramentas (OBRIGATÓRIO)
-app.get('/mcp/v1/tools', (req, res) => {
-  res.json({
-    tools: [
-      {
-        name: 'hello_world',
-        description: 'Retorna uma mensagem de boas-vindas',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: {
-              type: 'string',
-              description: 'Nome para cumprimentar'
-            }
-          },
-          required: ['name']
-        }
-      },
-      {
-        name: 'test_connection',
-        description: 'Testa a conexão com o servidor',
-        inputSchema: {
-          type: 'object',
-          properties: {}
-        }
-      }
-    ]
-  });
+// Endpoint OPTIONS para CORS
+app.options('/', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(200);
 });
-
-// ===== ENDPOINTS AUXILIARES =====
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
-    server: SERVER_INFO.name,
-    version: SERVER_INFO.version,
-    timestamp: new Date().toISOString()
+    server: 'mcp-server-remoto',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    protocol: 'jsonrpc'
   });
 });
 
-// Raiz - retorna informações básicas
+// Informações na raiz (GET)
 app.get('/', (req, res) => {
   res.json({
-    message: 'MCP Server Remoto está funcionando!',
-    version: SERVER_INFO.version,
-    endpoints: {
-      manifest: '/.well-known/mcp/manifest.json',
-      tools: '/mcp/v1/tools',
-      invoke: '/mcp/v1/invoke',
-      health: '/health'
-    }
+    message: 'MCP Server Remoto - Conector Personalizado',
+    version: '1.0.0',
+    status: 'online',
+    usage: 'POST / com JSON-RPC 2.0',
+    methods: ['initialize', 'tools/list', 'tools/call']
   });
+});
+
+// Log de todas as requisições para debug
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`, req.body);
+  next();
 });
 
 // ===== INICIALIZAÇÃO =====
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`MCP Server Remoto v${SERVER_INFO.version}`);
-  console.log(`Rodando na porta ${PORT}`);
+  console.log(`MCP Server Remoto rodando na porta ${PORT}`);
+  console.log(`Protocolo: JSON-RPC 2.0`);
   console.log(`Health: http://localhost:${PORT}/health`);
-  console.log(`Manifest: http://localhost:${PORT}/.well-known/mcp/manifest.json`);
-});
-
-// Tratamento de erros
-process.on('unhandledRejection', (error) => {
-  console.error('Erro não tratado:', error);
 });
