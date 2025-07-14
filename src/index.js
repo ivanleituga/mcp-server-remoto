@@ -4,22 +4,98 @@ const cors = require('cors');
 const app = express();
 
 // Configuração CORS mais permissiva
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
 
 app.use(express.json());
 
-// Log de todas as requisições para debug
+// Log detalhado de todas as requisições para debug
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-  }
+  console.log(`
+=== Requisição Recebida ===
+Timestamp: ${new Date().toISOString()}
+Method: ${req.method}
+Path: ${req.path}
+Headers: ${JSON.stringify(req.headers, null, 2)}
+Body: ${JSON.stringify(req.body, null, 2)}
+===========================
+  `);
   next();
+});
+
+// ===== ENDPOINTS DE ATIVAÇÃO E STATUS =====
+
+// Endpoint de status - CRÍTICO para mostrar como "Ativado"
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'active',
+    ready: true,
+    version: '1.0.0',
+    capabilities: {
+      tools: true
+    }
+  });
+});
+
+// Endpoint de ativação
+app.post('/activate', (req, res) => {
+  console.log('Servidor sendo ativado pelo Claude');
+  res.json({
+    status: 'activated',
+    message: 'MCP-server-remoto ativado com sucesso'
+  });
+});
+
+// Endpoint de capabilities
+app.get('/capabilities', (req, res) => {
+  res.json({
+    version: '1.0.0',
+    tools: {
+      supported: true,
+      count: 2
+    },
+    protocol: {
+      json_rpc: '2.0',
+      mcp: '1.0'
+    }
+  });
+});
+
+// Endpoint alternativo de manifesto
+app.get('/manifest', (req, res) => {
+  res.json({
+    name: 'MCP-server-remoto',
+    version: '1.0.0',
+    status: 'active',
+    tools: [
+      {
+        name: 'hello_world',
+        enabled: true
+      },
+      {
+        name: 'test_connection',
+        enabled: true
+      }
+    ]
+  });
+});
+
+// WebSocket fallback (alguns conectores esperam isso)
+app.get('/ws', (req, res) => {
+  res.status(426).json({
+    error: 'WebSocket not implemented',
+    message: 'Use JSON-RPC over HTTP instead'
+  });
 });
 
 // ===== PROTOCOLO DE DESCOBERTA =====
@@ -221,28 +297,40 @@ Timestamp: ${new Date().toISOString()}`
 
 // ===== ENDPOINTS AUXILIARES =====
 
-// Health check
+// Health check atualizado
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy',
+    active: true,  // Importante para ativação
+    ready: true,   // Importante para ativação
     server: 'MCP-server-remoto',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
     endpoints: {
       discovery: '/.well-known/mcp.json',
       jsonrpc: '/',
-      health: '/health'
+      health: '/health',
+      status: '/status'
     }
   });
 });
 
-// Página inicial
+// Página inicial atualizada
 app.get('/', (req, res) => {
   res.json({
     name: 'MCP-server-remoto',
-    status: 'online',
-    message: 'Use POST / para chamadas JSON-RPC',
-    discovery: '/.well-known/mcp.json'
+    status: 'active',  // IMPORTANTE: status como 'active'
+    version: '1.0.0',
+    ready: true,       // IMPORTANTE: ready como true
+    message: 'Servidor MCP ativo e pronto',
+    endpoints: {
+      discovery: '/.well-known/mcp.json',
+      jsonrpc: 'POST /',
+      status: '/status',
+      health: '/health',
+      capabilities: '/capabilities'
+    }
   });
 });
 
@@ -261,39 +349,68 @@ app.get('/test', (req, res) => {
         .success { color: green; }
         .error { color: red; }
         input { margin: 5px; padding: 5px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
       </style>
     </head>
     <body>
       <h1>MCP-server-remoto - Teste Interativo</h1>
       
-      <h3>1. Descoberta</h3>
-      <button onclick="testDiscovery()">Testar Discovery</button>
-      
-      <h3>2. Protocolo JSON-RPC</h3>
-      <button onclick="testInitialize()">Initialize</button>
-      <button onclick="testListTools()">Listar Ferramentas</button>
-      <button onclick="testPing()">Ping</button>
-      
-      <h3>3. Ferramentas</h3>
-      <div>
-        <input type="text" id="nameInput" placeholder="Seu nome" value="Teste">
-        <button onclick="testHelloWorld()">Hello World</button>
+      <div class="section">
+        <h3>1. Status e Ativação</h3>
+        <button onclick="testStatus()">Status</button>
+        <button onclick="testActivate()">Activate</button>
+        <button onclick="testCapabilities()">Capabilities</button>
+        <button onclick="testManifest()">Manifest</button>
       </div>
-      <button onclick="testConnection()">Test Connection</button>
+      
+      <div class="section">
+        <h3>2. Descoberta</h3>
+        <button onclick="testDiscovery()">Discovery (.well-known)</button>
+        <button onclick="testHealth()">Health Check</button>
+      </div>
+      
+      <div class="section">
+        <h3>3. Protocolo JSON-RPC</h3>
+        <button onclick="testInitialize()">Initialize</button>
+        <button onclick="testListTools()">Listar Ferramentas</button>
+        <button onclick="testPing()">Ping</button>
+      </div>
+      
+      <div class="section">
+        <h3>4. Ferramentas</h3>
+        <div>
+          <input type="text" id="nameInput" placeholder="Seu nome" value="Teste">
+          <button onclick="testHelloWorld()">Hello World</button>
+        </div>
+        <button onclick="testConnection()">Test Connection</button>
+      </div>
       
       <h3>Resposta:</h3>
       <pre id="response">Clique em um botão para testar...</pre>
       
       <script>
-        async function testDiscovery() {
+        async function testEndpoint(url, method = 'GET', body = null) {
           try {
-            const response = await fetch('/.well-known/mcp.json');
+            const options = {
+              method: method,
+              headers: { 'Content-Type': 'application/json' }
+            };
+            if (body) options.body = JSON.stringify(body);
+            
+            const response = await fetch(url, options);
             const data = await response.json();
             showResponse(data, response.ok);
           } catch (error) {
             showResponse({ error: error.message }, false);
           }
         }
+        
+        function testStatus() { testEndpoint('/status'); }
+        function testActivate() { testEndpoint('/activate', 'POST'); }
+        function testCapabilities() { testEndpoint('/capabilities'); }
+        function testManifest() { testEndpoint('/manifest'); }
+        function testDiscovery() { testEndpoint('/.well-known/mcp.json'); }
+        function testHealth() { testEndpoint('/health'); }
         
         async function sendRPC(method, params = {}) {
           try {
@@ -352,13 +469,24 @@ app.listen(PORT, () => {
 ===============================================
 MCP-server-remoto v1.0.0
 Porta: ${PORT}
+Status: ATIVO
 ===============================================
 Endpoints disponíveis:
-- GET  /                    (informações)
+- GET  /                     (informações)
+- GET  /status              (status do servidor)
+- POST /activate            (ativação)
+- GET  /capabilities        (capacidades)
+- GET  /manifest            (manifesto)
 - GET  /.well-known/mcp.json (descoberta)
 - POST /                    (JSON-RPC)
-- GET  /health             (health check)
-- GET  /test               (página de teste)
+- GET  /health              (health check)
+- GET  /test                (página de teste)
 ===============================================
   `);
+});
+
+// Manter o processo vivo
+process.on('SIGINT', () => {
+  console.log('Servidor finalizado');
+  process.exit(0);
 });
