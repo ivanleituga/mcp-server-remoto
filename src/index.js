@@ -12,17 +12,16 @@ app.use(cors({
 
 app.use(express.json());
 
-// Store transports by session ID
-const transports = {};
+// Store sessions
+const sessions = {};
 
-// Store server data
+// Server info
 const serverInfo = {
   name: 'mcp-server-remoto',
   version: '1.0.0',
-  protocolVersion: '2024-11-05',
+  protocolVersion: '2025-03-26',
   capabilities: {
-    tools: {},
-    logging: {}
+    tools: {}
   }
 };
 
@@ -76,273 +75,58 @@ async function executeTool(toolName, args = {}) {
   }
 }
 
-// ===== INSPECTOR COMPATIBILITY - ROOT ENDPOINTS =====
-// O Inspector espera SSE no endpoint raiz quando transportType=sse
-app.get('/', (req, res) => {
-  // Se for uma requisição SSE do Inspector
-  if (req.headers.accept === 'text/event-stream') {
-    console.log('[Inspector] SSE request detected on root path');
-    
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-    
-    const sessionId = uuidv4();
-    const endpoint = `/messages?sessionId=${sessionId}`;
-    
-    // Send endpoint event
-    res.write(`event: endpoint\n`);
-    res.write(`data: "${endpoint}"\n\n`);
-    
-    transports[sessionId] = {
-      type: 'sse',
-      sessionId,
-      response: res,
-      createdAt: new Date()
-    };
-    
-    // Keep alive
-    const keepAlive = setInterval(() => {
-      res.write(':keepalive\n\n');
-    }, 30000);
-    
-    req.on('close', () => {
-      clearInterval(keepAlive);
-      delete transports[sessionId];
-      console.log(`[Inspector] SSE connection closed: ${sessionId}`);
-    });
-    
-  } else {
-    // Para requisições normais, retornar JSON
-    res.json({
-      name: serverInfo.name,
-      version: serverInfo.version,
-      protocols: {
-        'streamable-http': {
-          endpoint: '/mcp',
-          protocolVersion: '2025-03-26'
-        },
-        'sse': {
-          endpoint: '/',
-          messagesEndpoint: '/messages',
-          protocolVersion: '2024-11-05'
-        }
-      }
-    });
-  }
-});
-
-// Para Streamable HTTP, o Inspector também pode esperar no raiz
-app.post('/', async (req, res) => {
-  // Se for uma requisição JSON-RPC, redirecionar para /mcp
-  if (req.body && req.body.jsonrpc) {
-    console.log('[Inspector] Redirecting POST / to /mcp');
-    req.url = '/mcp';
-    app._router.handle(req, res);
-  } else {
-    res.status(404).json({ error: 'Not found' });
-  }
-});
-
-// ===== STREAMABLE HTTP TRANSPORT (NEW PROTOCOL) =====
-app.all('/mcp', async (req, res) => {
-  console.log(`[Streamable] ${req.method} /mcp - Session: ${req.headers['mcp-session-id'] || 'none'}`);
-  
+// Main endpoint - handles both root and /mcp
+app.post(['/', '/mcp'], async (req, res) => {
   try {
     const sessionId = req.headers['mcp-session-id'];
+    const { jsonrpc, method, params, id } = req.body;
     
-    // Handle different methods
-    if (req.method === 'POST') {
-      const { jsonrpc, method, params, id } = req.body;
+    // Initialize request
+    if (method === 'initialize' && !sessionId) {
+      const newSessionId = uuidv4();
+      sessions[newSessionId] = {
+        createdAt: new Date(),
+        lastAccess: new Date()
+      };
       
-      // Initialize request
-      if (method === 'initialize' && !sessionId) {
-        const newSessionId = uuidv4();
-        res.setHeader('Mcp-Session-Id', newSessionId);
-        
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            protocolVersion: serverInfo.protocolVersion,
-            capabilities: serverInfo.capabilities,
-            serverInfo: {
-              name: serverInfo.name,
-              version: serverInfo.version
-            }
-          },
-          id
-        });
-        
-        transports[newSessionId] = {
-          type: 'streamable',
-          sessionId: newSessionId,
-          createdAt: new Date()
-        };
-        
-        console.log(`[Streamable] Nova sessão criada: ${newSessionId}`);
-        return;
-      }
-      
-      // Require session for other methods
-      if (!sessionId || !transports[sessionId]) {
-        res.status(400).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Bad Request: No valid session ID provided'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Handle other methods
-      let result;
-      switch (method) {
-        case 'tools/list':
-          result = { tools };
-          break;
-          
-        case 'tools/call':
-          result = await executeTool(params.name, params.arguments);
-          break;
-          
-        case 'logging/setLevel':
-          result = {};
-          break;
-          
-        default:
-          res.json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32601,
-              message: `Method not found: ${method}`
-            },
-            id
-          });
-          return;
-      }
+      res.setHeader('Mcp-Session-Id', newSessionId);
       
       res.json({
         jsonrpc: '2.0',
-        result,
-        id
-      });
-      
-    } else if (req.method === 'GET') {
-      // SSE stream for notifications
-      if (!sessionId || !transports[sessionId]) {
-        res.status(400).send('Invalid or missing session ID');
-        return;
-      }
-      
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      });
-      
-      // Keep connection alive
-      const keepAlive = setInterval(() => {
-        res.write(':keepalive\n\n');
-      }, 30000);
-      
-      req.on('close', () => {
-        clearInterval(keepAlive);
-        console.log(`[Streamable] SSE stream fechado: ${sessionId}`);
-      });
-      
-    } else if (req.method === 'DELETE') {
-      // Close session
-      if (sessionId && transports[sessionId]) {
-        delete transports[sessionId];
-        console.log(`[Streamable] Sessão encerrada: ${sessionId}`);
-      }
-      res.status(200).send('Session closed');
-      
-    } else {
-      res.status(405).set('Allow', 'GET, POST, DELETE').send('Method Not Allowed');
-    }
-    
-  } catch (error) {
-    console.error('[Streamable] Erro:', error);
-    res.status(500).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32603,
-        message: 'Internal server error'
-      },
-      id: req.body?.id || null
-    });
-  }
-});
-
-// ===== SSE TRANSPORT (OLD PROTOCOL) =====
-app.get('/sse', (req, res) => {
-  console.log('[SSE] Nova conexão SSE');
-  
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-  
-  const sessionId = uuidv4();
-  const endpoint = `/messages?sessionId=${sessionId}`;
-  
-  // Send endpoint event
-  res.write(`event: endpoint\n`);
-  res.write(`data: "${endpoint}"\n\n`);
-  
-  transports[sessionId] = {
-    type: 'sse',
-    sessionId,
-    response: res,
-    createdAt: new Date()
-  };
-  
-  // Keep alive
-  const keepAlive = setInterval(() => {
-    res.write(':keepalive\n\n');
-  }, 30000);
-  
-  req.on('close', () => {
-    clearInterval(keepAlive);
-    delete transports[sessionId];
-    console.log(`[SSE] Conexão fechada: ${sessionId}`);
-  });
-});
-
-app.post('/messages', async (req, res) => {
-  const sessionId = req.query.sessionId;
-  
-  if (!sessionId || !transports[sessionId] || transports[sessionId].type !== 'sse') {
-    res.status(404).send('Session not found');
-    return;
-  }
-  
-  console.log(`[SSE] Mensagem recebida - Sessão: ${sessionId}, Método: ${req.body.method}`);
-  
-  try {
-    const { jsonrpc, method, params, id } = req.body;
-    let result;
-    
-    switch (method) {
-      case 'initialize':
-        result = {
+        result: {
           protocolVersion: serverInfo.protocolVersion,
           capabilities: serverInfo.capabilities,
           serverInfo: {
             name: serverInfo.name,
             version: serverInfo.version
           }
-        };
-        break;
-        
+        },
+        id
+      });
+      
+      console.log(`Session created: ${newSessionId}`);
+      return;
+    }
+    
+    // Validate session for other requests
+    if (!sessionId || !sessions[sessionId]) {
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: No valid session ID provided'
+        },
+        id: id || null
+      });
+      return;
+    }
+    
+    // Update last access
+    sessions[sessionId].lastAccess = new Date();
+    
+    // Handle methods
+    let result;
+    switch (method) {
       case 'tools/list':
         result = { tools };
         break;
@@ -374,64 +158,125 @@ app.post('/messages', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('[SSE] Erro:', error);
-    res.json({
+    console.error('Error:', error);
+    res.status(500).json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
         message: error.message
       },
-      id: req.body.id
+      id: req.body?.id || null
     });
   }
 });
 
-// ===== AUXILIARY ENDPOINTS =====
+// GET for SSE stream
+app.get(['/', '/mcp'], async (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  
+  if (!sessionId || !sessions[sessionId]) {
+    res.status(400).send('Invalid or missing session ID');
+    return;
+  }
+  
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  
+  // Send initial connection event
+  res.write(':connected\n\n');
+  
+  // Keep alive
+  const keepAlive = setInterval(() => {
+    res.write(':keepalive\n\n');
+  }, 30000);
+  
+  // Store SSE connection
+  sessions[sessionId].sseConnection = res;
+  
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    if (sessions[sessionId]) {
+      delete sessions[sessionId].sseConnection;
+    }
+    console.log(`SSE connection closed: ${sessionId}`);
+  });
+});
+
+// DELETE to close session
+app.delete(['/', '/mcp'], (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  
+  if (sessionId && sessions[sessionId]) {
+    delete sessions[sessionId];
+    console.log(`Session closed: ${sessionId}`);
+  }
+  
+  res.status(200).send('Session closed');
+});
+
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     server: serverInfo.name,
     version: serverInfo.version,
-    protocols: ['streamable-http', 'sse'],
-    activeSessions: Object.keys(transports).length,
+    protocol: 'streamable-http',
+    protocolVersion: serverInfo.protocolVersion,
+    activeSessions: Object.keys(sessions).length,
     timestamp: new Date().toISOString()
   });
 });
 
-// ===== START SERVER =====
+// Info endpoint - return JSON for all requests
+app.all('*', (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  
+  res.json({
+    name: serverInfo.name,
+    version: serverInfo.version,
+    protocol: 'streamable-http',
+    endpoints: {
+      primary: '/',
+      alternate: '/mcp',
+      health: '/health'
+    }
+  });
+});
+
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
 ===============================================
-MCP Server Remoto - Inspector Compatible
+MCP Server - Streamable HTTP Only
 Port: ${PORT}
+Protocol: Streamable HTTP (2025-03-26)
 ===============================================
-Supported protocols:
-
-1. Streamable HTTP (2025-03-26) - NEW
-   POST / or /mcp - Initialize session
-   GET  /mcp - SSE stream (with session)
-   POST /mcp - Send requests (with session)
-   DELETE /mcp - Close session
-
-2. HTTP+SSE (2024-11-05) - LEGACY
-   GET  / or /sse - Establish SSE connection
-   POST /messages?sessionId=xxx - Send requests
-
-Inspector endpoints:
-   SSE: https://mcp-server-remoto.onrender.com
-   Streamable: https://mcp-server-remoto.onrender.com
+Endpoints:
+  POST / or /mcp - Initialize & Commands
+  GET  / or /mcp - SSE Stream
+  DELETE / or /mcp - Close Session
 ===============================================
   `);
 });
 
-process.on('SIGINT', () => {
-  console.log('\nShutting down...');
-  // Close all SSE connections
-  Object.values(transports).forEach(transport => {
-    if (transport.type === 'sse' && transport.response) {
-      transport.response.end();
+// Cleanup old sessions every 5 minutes
+setInterval(() => {
+  const now = new Date();
+  const timeout = 30 * 60 * 1000; // 30 minutes
+  
+  Object.entries(sessions).forEach(([id, session]) => {
+    if (now - session.lastAccess > timeout) {
+      delete sessions[id];
+      console.log(`Session expired: ${id}`);
     }
   });
-  process.exit(0);
-});
+}, 5 * 60 * 1000);
