@@ -12,19 +12,27 @@ app.use(cors({
 
 app.use(express.json());
 
-// ===== LOGGING PARA DEBUG DO CLAUDE =====
+// ===== LOGGING PARA DEBUG =====
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Headers: ${JSON.stringify(req.headers)}`);
+  const logId = Math.random().toString(36).substring(7);
+  req.logId = logId;
+  
+  console.log(`[${logId}] ${new Date().toISOString()} ${req.method} ${req.url}`);
   
   // Log quando a conexão é fechada abruptamente
   req.on('close', () => {
     if (!res.headersSent) {
-      console.log(`[CONNECTION CLOSED BEFORE RESPONSE] ${req.method} ${req.url}`);
+      console.log(`[${logId}] CONNECTION CLOSED BEFORE RESPONSE`);
     }
   });
   
   req.on('error', (err) => {
-    console.log(`[REQUEST ERROR] ${req.method} ${req.url} - ${err.message}`);
+    console.log(`[${logId}] REQUEST ERROR: ${err.message}`);
+  });
+  
+  // Log quando a resposta é enviada com sucesso
+  res.on('finish', () => {
+    console.log(`[${logId}] Response sent successfully - Status: ${res.statusCode}`);
   });
   
   next();
@@ -78,8 +86,10 @@ const tools = [
   }
 ];
 
-// Tool execution
-async function executeTool(toolName, args = {}) {
+// Tool execution - SIMPLIFICADA
+function executeTool(toolName, args = {}) {
+  console.log(`[EXECUTE TOOL] Name: ${toolName}, Args:`, JSON.stringify(args));
+  
   switch (toolName) {
     case 'hello_world':
       return {
@@ -98,7 +108,7 @@ async function executeTool(toolName, args = {}) {
       };
     
     default:
-      throw new Error(`Ferramenta não encontrada: ${toolName}`);
+      throw new Error(`Tool not found: ${toolName}`);
   }
 }
 
@@ -124,11 +134,13 @@ app.get('/', (req, res) => {
 
 // Main endpoint POST - handles both root and /mcp
 app.post(['/', '/mcp'], async (req, res) => {
+  const logId = req.logId;
+  
   try {
     const sessionId = req.headers['mcp-session-id'];
     const { jsonrpc, method, params, id } = req.body;
     
-    console.log(`[POST REQUEST] Method: ${method}, SessionId: ${sessionId || 'none'}`);
+    console.log(`[${logId}] Method: ${method}, SessionId: ${sessionId || 'none'}`);
     
     // Initialize request
     if (method === 'initialize' && !sessionId) {
@@ -140,7 +152,7 @@ app.post(['/', '/mcp'], async (req, res) => {
       
       res.setHeader('Mcp-Session-Id', newSessionId);
       
-      res.json({
+      const response = {
         jsonrpc: '2.0',
         result: {
           protocolVersion: serverInfo.protocolVersion,
@@ -151,14 +163,16 @@ app.post(['/', '/mcp'], async (req, res) => {
           }
         },
         id
-      });
+      };
       
-      console.log(`[SESSION CREATED] ${newSessionId}`);
+      res.json(response);
+      console.log(`[${logId}] Session created: ${newSessionId}`);
       return;
     }
     
     // Validate session for other requests
     if (!sessionId || !sessions[sessionId]) {
+      console.error(`[${logId}] No valid session for method: ${method}`);
       res.status(400).json({
         jsonrpc: '2.0',
         error: {
@@ -176,51 +190,71 @@ app.post(['/', '/mcp'], async (req, res) => {
     // Handle methods
     let result;
     switch (method) {
-    case 'tools/list':
+      case 'tools/list':
         result = { tools };
         break;
         
-    case 'tools/call':
-        result = await executeTool(params.name, params.arguments);
+      case 'tools/call':
+        // Sincronizar para evitar problemas de async
+        try {
+          result = executeTool(params.name, params.arguments);
+        } catch (error) {
+          console.error(`[${logId}] Tool execution error:`, error.message);
+          res.json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: error.message
+            },
+            id
+          });
+          return;
+        }
         break;
         
-    case 'logging/setLevel':
+      case 'logging/setLevel':
         result = {};
         break;
         
-    case 'notifications/initialized':
-        // O Claude envia isso após inicializar
+      case 'notifications/initialized':
         result = {};
         break;
         
-    default:
+      default:
+        console.error(`[${logId}] Method not found: ${method}`);
         res.json({
-        jsonrpc: '2.0',
-        error: {
+          jsonrpc: '2.0',
+          error: {
             code: -32601,
             message: `Method not found: ${method}`
-        },
-        id
+          },
+          id
         });
         return;
     }
-
-    res.json({
+    
+    // Send successful response
+    const response = {
       jsonrpc: '2.0',
       result,
       id
-    });
+    };
+    
+    res.json(response);
+    console.log(`[${logId}] Response sent for method: ${method}`);
     
   } catch (error) {
-    console.error('[POST ERROR]:', error);
-    res.status(500).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32603,
-        message: error.message
-      },
-      id: req.body?.id || null
-    });
+    console.error(`[${logId}] Unexpected error:`, error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: error.message
+        },
+        id: req.body?.id || null
+      });
+    }
   }
 });
 
@@ -228,7 +262,7 @@ app.post(['/', '/mcp'], async (req, res) => {
 app.get(['/mcp'], async (req, res) => {
   const sessionId = req.headers['mcp-session-id'];
   
-  console.log(`[GET SSE REQUEST] SessionId: ${sessionId || 'none'}`);
+  console.log(`[SSE] GET request, SessionId: ${sessionId || 'none'}`);
   
   if (!sessionId || !sessions[sessionId]) {
     res.status(400).send('Invalid or missing session ID');
@@ -259,7 +293,7 @@ app.get(['/mcp'], async (req, res) => {
     if (sessions[sessionId]) {
       delete sessions[sessionId].sseConnection;
     }
-    console.log(`[SSE CLOSED] ${sessionId}`);
+    console.log(`[SSE] Connection closed for session: ${sessionId}`);
   });
 });
 
@@ -269,7 +303,7 @@ app.delete(['/', '/mcp'], (req, res) => {
   
   if (sessionId && sessions[sessionId]) {
     delete sessions[sessionId];
-    console.log(`[SESSION DELETED] ${sessionId}`);
+    console.log(`[DELETE] Session closed: ${sessionId}`);
   }
   
   res.status(200).send('Session closed');
@@ -300,8 +334,10 @@ app.get('/info', (req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error(`[ERROR HANDLER] ${req.method} ${req.url} - Error:`, err);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error(`[ERROR HANDLER] Error:`, err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Fallback para qualquer outra rota
@@ -312,24 +348,26 @@ app.all('*', (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ===============================================
-MCP Server - Streamable HTTP Only (with Debug)
+MCP Server - Streamable HTTP (Production Ready)
 Port: ${PORT}
 Protocol: Streamable HTTP (2025-03-26)
 ===============================================
 Endpoints:
   POST / or /mcp - Initialize & Commands
-  GET  /mcp - SSE Stream
+  GET  /mcp - SSE Stream  
   DELETE / or /mcp - Close Session
   GET /health - Health check
-  GET /ping - Quick test
-  GET /capabilities - Server capabilities
   GET /info - Server info
 ===============================================
   `);
 });
+
+// Configurações do servidor para evitar timeouts
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 
 // Keep server warm (para Render)
 setInterval(() => {
@@ -345,7 +383,16 @@ setInterval(() => {
   Object.entries(sessions).forEach(([id, session]) => {
     if (now - session.lastAccess > timeout) {
       delete sessions[id];
-      console.log(`[SESSION EXPIRED] ${id}`);
+      console.log(`[CLEANUP] Session expired: ${id}`);
     }
   });
 }, 5 * 60 * 1000);
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
