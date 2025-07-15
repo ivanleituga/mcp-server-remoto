@@ -4,7 +4,6 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-// Configure CORS
 app.use(cors({
   origin: '*',
   exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id', 'anthropic-mcp-version']
@@ -12,7 +11,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// Logging detalhado
+// Logging
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   if (req.body && Object.keys(req.body).length > 0) {
@@ -21,28 +20,33 @@ app.use((req, res, next) => {
   next();
 });
 
-// Store sessions - Agora com soft delete
+// Sessions
 const sessions = {};
 
-// Tools
+// Tools - Formato completo
 const tools = [
   {
     name: 'hello_world',
-    description: 'Retorna uma mensagem de boas-vindas',
+    description: 'Retorna uma mensagem de boas-vindas personalizada',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Nome para cumprimentar' }
+        name: { 
+          type: 'string', 
+          description: 'Nome para cumprimentar',
+          default: 'Mundo'
+        }
       },
-      required: ['name']
+      required: []  // Nenhum campo obrigatório
     }
   },
   {
     name: 'test_connection',
-    description: 'Testa a conexão com o servidor',
+    description: 'Testa a conexão com o servidor MCP',
     inputSchema: {
       type: 'object',
-      properties: {}
+      properties: {},
+      required: []
     }
   }
 ];
@@ -51,12 +55,18 @@ const tools = [
 const prompts = [
   {
     name: "greeting_prompt",
-    description: "Gera uma saudação personalizada",
+    description: "Gera uma saudação personalizada em múltiplos idiomas",
     arguments: [
       {
         name: "name",
-        description: "Nome da pessoa",
+        description: "Nome da pessoa para cumprimentar",
         required: true
+      },
+      {
+        name: "language",
+        description: "Idioma da saudação (pt, en, es)",
+        required: false,
+        default: "pt"
       }
     ]
   }
@@ -65,44 +75,87 @@ const prompts = [
 // Resources
 const resources = [];
 
-// Tool execution
+// Executar ferramenta
 function executeTool(toolName, args = {}) {
+  console.log(`🔧 Executando: ${toolName}`, args);
+  
   switch (toolName) {
     case 'hello_world':
       return {
         content: [{
           type: 'text',
           text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto!`
-        }]
+        }],
+        isError: false
       };
     
     case 'test_connection':
       return {
         content: [{
           type: 'text',
-          text: `✅ Conexão estabelecida!\nServidor: mcp-server-remoto\nVersão: 1.0.0\nTimestamp: ${new Date().toISOString()}`
-        }]
+          text: `✅ Conexão estabelecida com sucesso!\n\n` +
+                `Servidor: mcp-server-remoto\n` +
+                `Versão: 1.0.0\n` +
+                `Protocolo: MCP 2024-11-05\n` +
+                `Timestamp: ${new Date().toISOString()}\n` +
+                `Status: Operacional`
+        }],
+        isError: false
       };
     
     default:
-      throw new Error(`Tool not found: ${toolName}`);
+      return {
+        content: [{
+          type: 'text',
+          text: `Erro: Ferramenta '${toolName}' não encontrada`
+        }],
+        isError: true
+      };
   }
 }
 
-// Prompt handler
+// Obter prompt
 function getPrompt(promptName, args = {}) {
   if (promptName === 'greeting_prompt') {
+    const name = args.name || 'amigo';
+    const language = args.language || 'pt';
+    
+    const greetings = {
+      pt: `Olá ${name}! Como posso ajudá-lo hoje?`,
+      en: `Hello ${name}! How can I help you today?`,
+      es: `¡Hola ${name}! ¿Cómo puedo ayudarte hoy?`
+    };
+    
     return {
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: `Olá ${args.name || 'amigo'}! Como posso ajudá-lo hoje?`
+      description: `Saudação personalizada para ${name}`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: greetings[language] || greetings.pt
+          }
         }
-      }]
+      ]
     };
   }
-  throw new Error(`Prompt not found: ${promptName}`);
+  
+  throw new Error(`Prompt '${promptName}' não encontrado`);
+}
+
+// Enviar evento SSE
+function sendSSEEvent(sessionId, event, data) {
+  if (!sessions[sessionId] || !sessions[sessionId].sseClients) return;
+  
+  const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  
+  sessions[sessionId].sseClients.forEach((client, index) => {
+    try {
+      client.write(message);
+    } catch (e) {
+      console.log(`❌ Erro ao enviar SSE para cliente ${index}`);
+    }
+  });
 }
 
 // ENDPOINT PRINCIPAL
@@ -128,8 +181,9 @@ app.post(['/', '/mcp'], (req, res) => {
         protocolVersion: requestedVersion,
         clientName: clientName,
         sseClients: [],
-        deleted: false, // Flag para soft delete
-        deleteTimeout: null
+        deleted: false,
+        deleteTimeout: null,
+        initialized: false
       };
       
       res.setHeader('Mcp-Session-Id', newSessionId);
@@ -158,7 +212,7 @@ app.post(['/', '/mcp'], (req, res) => {
       return;
     }
     
-    // Validar sessão (aceitar sessões soft deleted)
+    // Validar sessão
     if (!sessionId || !sessions[sessionId]) {
       console.log('❌ Sessão inválida');
       res.status(400).json({
@@ -172,9 +226,9 @@ app.post(['/', '/mcp'], (req, res) => {
       return;
     }
     
-    // Reativar sessão se estava marcada para delete
+    // Reativar se necessário
     if (sessions[sessionId].deleted) {
-      console.log('♻️ Reativando sessão marcada para delete');
+      console.log('♻️ Reativando sessão');
       sessions[sessionId].deleted = false;
       if (sessions[sessionId].deleteTimeout) {
         clearTimeout(sessions[sessionId].deleteTimeout);
@@ -190,12 +244,36 @@ app.post(['/', '/mcp'], (req, res) => {
     switch (method) {
       case 'tools/list':
         console.log('🔧 Listando ferramentas');
-        result = { tools };
+        result = { 
+          tools: tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+          }))
+        };
+        
+        // Notificar via SSE que as ferramentas estão disponíveis
+        sendSSEEvent(sessionId, 'tools_ready', {
+          count: tools.length,
+          tools: tools.map(t => t.name)
+        });
         break;
         
       case 'prompts/list':
         console.log('📝 Listando prompts');
-        result = { prompts };
+        result = { 
+          prompts: prompts.map(prompt => ({
+            name: prompt.name,
+            description: prompt.description,
+            arguments: prompt.arguments
+          }))
+        };
+        
+        // Notificar via SSE que os prompts estão disponíveis
+        sendSSEEvent(sessionId, 'prompts_ready', {
+          count: prompts.length,
+          prompts: prompts.map(p => p.name)
+        });
         break;
         
       case 'prompts/get':
@@ -206,20 +284,38 @@ app.post(['/', '/mcp'], (req, res) => {
       case 'resources/list':
         console.log('📚 Listando resources');
         result = { resources };
+        
+        sendSSEEvent(sessionId, 'resources_ready', {
+          count: resources.length
+        });
         break;
         
       case 'tools/call':
         console.log(`🔧 Chamando tool: ${params.name}`);
         result = executeTool(params.name, params.arguments);
+        
+        // Notificar execução via SSE
+        sendSSEEvent(sessionId, 'tool_executed', {
+          tool: params.name,
+          success: !result.isError
+        });
         break;
         
       case 'logging/setLevel':
-        result = { level: params.level };
+        result = { level: params.level || 'info' };
         break;
         
       case 'notifications/initialized':
         console.log('🔔 Cliente inicializado');
+        sessions[sessionId].initialized = true;
         result = {};
+        
+        // Notificar que o servidor está pronto
+        sendSSEEvent(sessionId, 'server_ready', {
+          tools: tools.length,
+          prompts: prompts.length,
+          resources: resources.length
+        });
         break;
         
       default:
@@ -234,6 +330,8 @@ app.post(['/', '/mcp'], (req, res) => {
         });
         return;
     }
+    
+    console.log('📤 Resposta:', JSON.stringify(result, null, 2));
     
     res.json({
       jsonrpc: '2.0',
@@ -260,22 +358,20 @@ app.post(['/', '/mcp'], (req, res) => {
 app.get(['/', '/mcp', '/sse'], (req, res) => {
   const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
   
-  // Se não tem session, retorna info
   if (!sessionId) {
     return res.json({ 
       status: 'ok', 
       server: 'mcp-server-remoto',
-      version: '1.0.0'
+      version: '1.0.0',
+      capabilities: ['tools', 'prompts', 'sse']
     });
   }
   
-  // Verificar sessão (aceitar soft deleted)
   if (!sessions[sessionId]) {
     console.log(`❌ SSE: Sessão não existe ${sessionId}`);
     return res.status(400).send('Invalid session');
   }
   
-  // Reativar se necessário
   if (sessions[sessionId].deleted) {
     console.log('♻️ SSE: Reativando sessão');
     sessions[sessionId].deleted = false;
@@ -287,7 +383,6 @@ app.get(['/', '/mcp', '/sse'], (req, res) => {
   
   console.log(`📡 SSE conectado: ${sessionId}`);
   
-  // Configurar SSE
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -296,51 +391,49 @@ app.get(['/', '/mcp', '/sse'], (req, res) => {
     'Access-Control-Allow-Origin': '*'
   });
   
-  // Adicionar cliente
   sessions[sessionId].sseClients.push(res);
   
-  // Evento inicial
+  // Evento de conexão
   res.write('event: open\n');
   res.write(`data: {"type":"connected","sessionId":"${sessionId}"}\n\n`);
   
-  // Enviar lista de capacidades imediatamente
-  setTimeout(() => {
-    res.write('event: capabilities\n');
-    res.write(`data: {"tools":${tools.length},"prompts":${prompts.length}}\n\n`);
-  }, 100);
+  // Se já inicializado, enviar status
+  if (sessions[sessionId].initialized) {
+    setTimeout(() => {
+      res.write('event: status\n');
+      res.write(`data: {"initialized":true,"tools":${tools.length},"prompts":${prompts.length}}\n\n`);
+    }, 100);
+  }
   
   // Heartbeat
   const heartbeat = setInterval(() => {
     try {
-      res.write(':ping\n\n');
+      res.write(':heartbeat\n\n');
     } catch (e) {
       clearInterval(heartbeat);
     }
   }, 15000);
   
-  // Cleanup ao desconectar
   req.on('close', () => {
     clearInterval(heartbeat);
     
     if (sessions[sessionId]) {
       sessions[sessionId].sseClients = sessions[sessionId].sseClients.filter(c => c !== res);
-      console.log(`📡 SSE desconectado: ${sessionId}`);
+      console.log(`📡 SSE desconectado: ${sessionId} (${sessions[sessionId].sseClients.length} ativos)`);
     }
   });
 });
 
-// DELETE session - SOFT DELETE com delay
+// DELETE - Soft delete
 app.delete(['/', '/mcp'], (req, res) => {
   const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
   
   if (sessionId && sessions[sessionId]) {
-    console.log(`🗑️ Marcando sessão para delete: ${sessionId}`);
+    console.log(`🗑️ Soft delete: ${sessionId}`);
     
-    // Soft delete - marcar para deletar após 5 segundos
     sessions[sessionId].deleted = true;
     sessions[sessionId].deleteTimeout = setTimeout(() => {
       if (sessions[sessionId] && sessions[sessionId].deleted) {
-        // Fechar SSE clients
         sessions[sessionId].sseClients.forEach(client => {
           try { client.end(); } catch (e) {}
         });
@@ -348,7 +441,7 @@ app.delete(['/', '/mcp'], (req, res) => {
         delete sessions[sessionId];
         console.log(`🗑️ Sessão deletada permanentemente: ${sessionId}`);
       }
-    }, 5000); // Aguardar 5 segundos antes de deletar
+    }, 10000); // 10 segundos de grace period
   }
   
   res.json({ result: "success" });
@@ -357,7 +450,7 @@ app.delete(['/', '/mcp'], (req, res) => {
 // Health
 app.get('/health', (req, res) => res.send('OK'));
 
-// Cleanup automático
+// Cleanup
 setInterval(() => {
   const now = new Date();
   Object.entries(sessions).forEach(([id, session]) => {
@@ -375,12 +468,13 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
-🚀 MCP Server Remoto v4.0 - Soft Delete
+🚀 MCP Server Remoto v5.0
 📍 Port: ${PORT}
-🔧 Tools: ${tools.length}
-📝 Prompts: ${prompts.length}
-📚 Resources: ${resources.length}
-🗑️ Soft delete: 5s delay
-✅ Pronto para Claude Desktop!
+🔧 ${tools.length} ferramentas
+📝 ${prompts.length} prompts
+📚 ${resources.length} resources
+📡 SSE com notificações
+🗑️ Soft delete: 10s
+✅ Otimizado para Claude Desktop!
   `);
 });
