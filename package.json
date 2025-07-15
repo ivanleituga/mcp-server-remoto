@@ -1,21 +1,14 @@
 {
   "name": "mcp-server-remoto",
   "version": "1.0.0",
-  "description": "Servidor MCP remoto com protocolo SSE",
-  "main": "src/index.js",
+  "description": "Remote MCP Server",
+  "main": "server.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
-  "engines": {
-    "node": ">=14.0.0"
+    "cors": "^2.8.5",
+    "uuid": "^9.0.0"
   }
 }
