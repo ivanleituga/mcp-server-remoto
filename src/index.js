@@ -48,6 +48,12 @@ const tools = [
   }
 ];
 
+// Prompts (vazio por enquanto, mas necessário para o Claude)
+const prompts = [];
+
+// Resources (vazio por enquanto, mas pode ser necessário)
+const resources = [];
+
 // Tool execution
 function executeTool(toolName, args = {}) {
   switch (toolName) {
@@ -85,7 +91,7 @@ app.post(['/', '/mcp'], (req, res) => {
     if (method === 'initialize') {
       const newSessionId = uuidv4();
       
-      // IMPORTANTE: Detectar a versão do protocolo solicitada
+      // Detectar a versão do protocolo solicitada
       const requestedVersion = params?.protocolVersion || '2024-11-05';
       const clientName = params?.clientInfo?.name || 'unknown';
       
@@ -102,41 +108,24 @@ app.post(['/', '/mcp'], (req, res) => {
       res.setHeader('Mcp-Session-Id', newSessionId);
       res.setHeader('anthropic-session-id', newSessionId);
       
-      // RESPOSTA ADAPTADA À VERSÃO DO PROTOCOLO
-      if (requestedVersion === '2024-11-05') {
-        // Formato para Claude Desktop (versão antiga)
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            protocolVersion: '2024-11-05',  // ← Mesma versão que foi solicitada
-            capabilities: {
-              tools: {},
-              logging: {}
-            },
-            serverInfo: {
-              name: 'mcp-server-remoto',
-              version: '1.0.0'
-            }
+      // Resposta para Claude Desktop
+      res.json({
+        jsonrpc: '2.0',
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: {},
+            prompts: {},  // Adicionar prompts
+            resources: {}, // Adicionar resources
+            logging: {}
           },
-          id
-        });
-      } else {
-        // Formato para versões mais novas (Inspector, etc)
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            protocolVersion: requestedVersion,
-            capabilities: {
-              tools: {}
-            },
-            serverInfo: {
-              name: 'mcp-server-remoto',
-              version: '1.0.0'
-            }
-          },
-          id
-        });
-      }
+          serverInfo: {
+            name: 'mcp-server-remoto',
+            version: '1.0.0'
+          }
+        },
+        id
+      });
       
       console.log(`✅ Sessão criada: ${newSessionId}`);
       return;
@@ -163,8 +152,18 @@ app.post(['/', '/mcp'], (req, res) => {
     let result;
     switch (method) {
       case 'tools/list':
-        console.log('📋 Listando ferramentas...');
+        console.log('🔧 Listando ferramentas...');
         result = { tools };
+        break;
+        
+      case 'prompts/list':
+        console.log('📝 Listando prompts...');
+        result = { prompts };  // Lista vazia por enquanto
+        break;
+        
+      case 'resources/list':
+        console.log('📚 Listando resources...');
+        result = { resources };  // Lista vazia por enquanto
         break;
         
       case 'tools/call':
@@ -213,8 +212,23 @@ app.post(['/', '/mcp'], (req, res) => {
   }
 });
 
-// SSE endpoint (mantido para compatibilidade)
-app.get('/sse', (req, res) => {
+// SSE endpoint - IMPORTANTE: O Claude está tentando GET /
+app.get(['/', '/mcp', '/sse'], (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  
+  // Se não tem session ID, é provavelmente uma requisição de info
+  if (!sessionId) {
+    res.json({ 
+      status: 'ok', 
+      server: 'mcp-server-remoto',
+      endpoints: ['POST /', 'GET / (SSE)', 'DELETE /']
+    });
+    return;
+  }
+  
+  // Se tem session ID, inicia SSE
+  console.log(`📡 Iniciando SSE para sessão: ${sessionId}`);
+  
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -222,14 +236,19 @@ app.get('/sse', (req, res) => {
     'X-Accel-Buffering': 'no'
   });
   
-  res.write(':connected\n\n');
+  // Enviar mensagem inicial
+  res.write('event: open\n');
+  res.write('data: {"type":"connection","status":"connected"}\n\n');
   
+  // Heartbeat a cada 15 segundos
   const keepAlive = setInterval(() => {
     res.write(':keepalive\n\n');
   }, 15000);
   
+  // Limpar ao fechar
   req.on('close', () => {
     clearInterval(keepAlive);
+    console.log(`📡 SSE fechado para sessão: ${sessionId}`);
   });
 });
 
@@ -245,13 +264,8 @@ app.delete(['/', '/mcp'], (req, res) => {
   res.status(200).json({ result: "success" });
 });
 
-// Health & Info
+// Health check
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.json({ 
-  status: 'ok', 
-  server: 'mcp-server-remoto',
-  endpoints: ['POST /', 'GET /sse', 'DELETE /', 'GET /health']
-}));
 
 // Cleanup de sessões antigas
 setInterval(() => {
@@ -268,14 +282,18 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
-🚀 MCP Server Remoto - Multi-Protocol
+🚀 MCP Server Remoto - Claude Desktop Ready
 📍 Port: ${PORT}
-📋 Endpoints:
-   - POST / ou /mcp (initialize, tools/list, tools/call)
-   - GET /sse (Server-Sent Events)
-   - DELETE / ou /mcp (close session)
-   - GET /health
+📋 Métodos implementados:
+   - initialize
+   - notifications/initialized
+   - prompts/list (novo!)
+   - resources/list (novo!)
+   - tools/list
+   - tools/call
+   - logging/setLevel
 🔧 Ferramentas: hello_world, test_connection
-✅ Pronto para conexões!
+📡 SSE: GET / com session ID
+✅ Pronto para o Claude Desktop!
   `);
 });
