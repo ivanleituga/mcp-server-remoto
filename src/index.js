@@ -7,21 +7,24 @@ const app = express();
 // Configure CORS
 app.use(cors({
   origin: '*',
-  exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id', 'anthropic-mcp-version']
+  exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id']
 }));
 
 app.use(express.json());
 
-// Logging simplificado
+// Logging
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('Body:', JSON.stringify(req.body, null, 2));
+  }
   next();
 });
 
-// Armazenamento de sessões
+// Sessions
 const sessions = {};
 
-// Ferramentas (mantenha simples)
+// Tools
 const tools = [
   {
     name: 'hello_world',
@@ -33,10 +36,18 @@ const tools = [
       },
       required: ['name']
     }
+  },
+  {
+    name: 'test_connection',
+    description: 'Testa a conexão com o servidor',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
   }
 ];
 
-// Prompts (obrigatório para o Claude)
+// Prompts
 const prompts = [
   {
     name: "greeting_prompt",
@@ -51,20 +62,34 @@ const prompts = [
   }
 ];
 
-// Execução de ferramentas
+// Resources
+const resources = [];
+
+// Tool execution
 function executeTool(toolName, args = {}) {
-  if (toolName === 'hello_world') {
-    return {
-      content: [{
-        type: 'text',
-        text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto!`
-      }]
-    };
+  switch (toolName) {
+    case 'hello_world':
+      return {
+        content: [{
+          type: 'text',
+          text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto!`
+        }]
+      };
+    
+    case 'test_connection':
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Conexão estabelecida!\nServidor: mcp-server-remoto\nVersão: 1.0.0\nTimestamp: ${new Date().toISOString()}`
+        }]
+      };
+    
+    default:
+      throw new Error(`Tool not found: ${toolName}`);
   }
-  throw new Error(`Ferramenta não encontrada: ${toolName}`);
 }
 
-// Handler de prompts
+// Prompt execution
 function getPrompt(promptName, args = {}) {
   if (promptName === 'greeting_prompt') {
     return {
@@ -77,20 +102,22 @@ function getPrompt(promptName, args = {}) {
       }]
     };
   }
-  throw new Error(`Prompt não encontrado: ${promptName}`);
+  throw new Error(`Prompt not found: ${promptName}`);
 }
 
-// Endpoint principal
+// ENDPOINT PRINCIPAL - HTTP Streamable Protocol
 app.post(['/', '/mcp'], (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-  const { method, params, id } = req.body;
-  
-  console.log(`Método: ${method}, Sessão: ${sessionId || 'nova'}`);
-  
   try {
-    // Inicialização
-    if (method === 'initialize' && !sessionId) {
+    const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
+    const { jsonrpc, method, params, id } = req.body;
+    
+    console.log(`\n=== ${method} ===`);
+    console.log(`Session: ${sessionId || 'new'}`);
+    
+    // Initialize
+    if (method === 'initialize') {
       const newSessionId = uuidv4();
+      
       sessions[newSessionId] = {
         createdAt: new Date(),
         lastAccess: new Date()
@@ -98,17 +125,16 @@ app.post(['/', '/mcp'], (req, res) => {
       
       res.setHeader('Mcp-Session-Id', newSessionId);
       res.setHeader('anthropic-session-id', newSessionId);
-      res.setHeader('anthropic-mcp-version', '2024-11-05');
       
       res.json({
         jsonrpc: '2.0',
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: params?.protocolVersion || '2024-11-05',
           capabilities: {
-            tools: tools.map(t => t.name),
-            prompts: prompts.map(p => p.name),
-            resources: [],
-            logging: ['setLevel']
+            tools: {},
+            prompts: {},
+            resources: {},
+            logging: {}
           },
           serverInfo: {
             name: 'mcp-server-remoto',
@@ -118,26 +144,26 @@ app.post(['/', '/mcp'], (req, res) => {
         id
       });
       
-      console.log(`Sessão criada: ${newSessionId}`);
+      console.log(`✅ Session created: ${newSessionId}`);
       return;
     }
     
-    // Validar sessão
+    // Validate session
     if (!sessionId || !sessions[sessionId]) {
-      return res.status(400).json({
+      res.status(400).json({
         jsonrpc: '2.0',
         error: {
           code: -32000,
-          message: 'Sessão inválida'
+          message: 'Invalid or missing session'
         },
-        id: id || null
+        id
       });
+      return;
     }
     
-    // Atualizar acesso
     sessions[sessionId].lastAccess = new Date();
     
-    // Processar métodos
+    // Handle methods
     let result;
     switch (method) {
       case 'tools/list':
@@ -152,8 +178,16 @@ app.post(['/', '/mcp'], (req, res) => {
         result = getPrompt(params.name, params.arguments);
         break;
         
+      case 'resources/list':
+        result = { resources };
+        break;
+        
       case 'tools/call':
         result = executeTool(params.name, params.arguments);
+        break;
+        
+      case 'logging/setLevel':
+        result = { level: params.level };
         break;
         
       case 'notifications/initialized':
@@ -161,14 +195,15 @@ app.post(['/', '/mcp'], (req, res) => {
         break;
         
       default:
-        return res.json({
+        res.json({
           jsonrpc: '2.0',
           error: {
             code: -32601,
-            message: `Método não suportado: ${method}`
+            message: `Method not found: ${method}`
           },
           id
         });
+        return;
     }
     
     res.json({
@@ -177,8 +212,10 @@ app.post(['/', '/mcp'], (req, res) => {
       id
     });
     
+    console.log('✅ Success');
+    
   } catch (error) {
-    console.error('Erro:', error);
+    console.error('❌ Error:', error);
     res.status(500).json({
       jsonrpc: '2.0',
       error: {
@@ -190,76 +227,51 @@ app.post(['/', '/mcp'], (req, res) => {
   }
 });
 
-// SSE Endpoint (simplificado mas funcional)
+// GET endpoint - apenas para informação
 app.get(['/', '/mcp'], (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-  
-  if (!sessionId) {
-    return res.json({ 
-      status: 'online',
-      server: 'mcp-server-remoto',
-      version: '1.0.0'
-    });
-  }
-  
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-  });
-  
-  // Evento inicial
-  res.write('event: connected\n');
-  res.write('data: {}\n\n');
-  
-  // Heartbeat
-  const heartbeat = setInterval(() => {
-    res.write(':heartbeat\n\n');
-  }, 15000);
-  
-  // Fechar ao desconectar
-  req.on('close', () => {
-    clearInterval(heartbeat);
+  res.json({ 
+    server: 'mcp-server-remoto',
+    protocol: 'HTTP Streamable',
+    version: '1.0.0',
+    status: 'ready'
   });
 });
 
-// DELETE session (imediato)
+// DELETE session
 app.delete(['/', '/mcp'], (req, res) => {
   const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
   
   if (sessionId && sessions[sessionId]) {
     delete sessions[sessionId];
-    console.log(`Sessão encerrada: ${sessionId}`);
+    console.log(`🗑️ Session deleted: ${sessionId}`);
   }
   
-  res.status(200).json({ result: "success" });
+  res.json({ result: "success" });
 });
 
 // Health check
 app.get('/health', (req, res) => res.send('OK'));
 
-// Limpeza de sessões inativas
+// Cleanup old sessions
 setInterval(() => {
   const now = new Date();
-  Object.keys(sessions).forEach(id => {
-    if (now - sessions[id].lastAccess > 5 * 60 * 1000) { // 5 minutos
+  Object.entries(sessions).forEach(([id, session]) => {
+    if (now - session.lastAccess > 30 * 60 * 1000) {
       delete sessions[id];
+      console.log(`♻️ Session expired: ${id}`);
     }
   });
-}, 60 * 1000); // A cada minuto
+}, 5 * 60 * 1000);
 
-// Iniciar servidor
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
-==========================================
-MCP Server - Claude Desktop Optimized
-Porta: ${PORT}
-Protocolo: 2024-11-05
-Endpoints:
-  POST /       : Métodos MCP
-  GET  /       : SSE e informações
-  DELETE /     : Encerrar sessão
-==========================================
-`);
+🚀 MCP Server - HTTP Streamable Protocol
+📍 Port: ${PORT}
+🔧 Tools: ${tools.length}
+📝 Prompts: ${prompts.length}
+📚 Resources: ${resources.length}
+✅ Ready!
+  `);
 });
