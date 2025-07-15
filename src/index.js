@@ -4,44 +4,31 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-// Configuração crítica de CORS
+// CORS configurado corretamente
 app.use(cors({
   origin: '*',
-  exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id']
+  credentials: true
 }));
 
 app.use(express.json());
 
-// Logging aprimorado
+// Logging
 app.use((req, res, next) => {
-  const logId = Math.random().toString(36).substring(2, 8);
-  console.log(`[${logId}] ${new Date().toISOString()} ${req.method} ${req.url}`);
-  
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log(`[${logId}] Body:`, JSON.stringify(req.body));
-  }
-  
-  res.on('finish', () => {
-    console.log(`[${logId}] Response: ${res.statusCode}`);
-  });
-  
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Armazenamento de sessões
+// Store SSE connections and sessions
+const sseConnections = {};
 const sessions = {};
 
-// Informações do servidor (compatível com ambos)
+// Server info
 const serverInfo = {
   name: 'mcp-server-remoto',
-  version: '1.0.0',
-  protocolVersion: '2025-03-26',
-  capabilities: {
-    tools: {}
-  }
+  version: '1.0.0'
 };
 
-// Ferramentas
+// Tools
 const tools = [
   {
     name: 'hello_world',
@@ -64,14 +51,14 @@ const tools = [
   }
 ];
 
-// Execução de ferramentas
+// Tool execution
 function executeTool(toolName, args = {}) {
   switch (toolName) {
     case 'hello_world':
       return {
         content: [{
           type: 'text',
-          text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto!`
+          text: `Olá, ${args.name || 'Mundo'}! 👋 Sou o MCP Server Remoto via SSE!`
         }]
       };
     
@@ -79,131 +66,125 @@ function executeTool(toolName, args = {}) {
       return {
         content: [{
           type: 'text',
-          text: `✅ Conexão estabelecida!\nServidor: ${serverInfo.name}\nVersão: ${serverInfo.version}`
+          text: `✅ Conexão SSE estabelecida!\nServidor: ${serverInfo.name}\nVersão: ${serverInfo.version}\nTimestamp: ${new Date().toISOString()}`
         }]
       };
     
     default:
-      throw new Error(`Ferramenta não encontrada: ${toolName}`);
+      throw new Error(`Tool not found: ${toolName}`);
   }
 }
 
-// Endpoint de descoberta (Obrigatório para Claude)
-app.get('/.well-known/mcp', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('anthropic-mcp-version', '2025-03-26');
+// ===== IMPLEMENTAÇÃO SSE CORRETA =====
+
+// Endpoint SSE principal - DEVE estar em /sse para compatibilidade com parceiros
+app.get('/sse', (req, res) => {
+  console.log('Nova conexão SSE estabelecida');
   
-  res.json({
-    version: '2025-03-26',
-    capabilities: {
-      protocols: ["streamable_http"],
-      methods: ["initialize", "tools/list", "tools/call", "close"],
-      features: ["tool_use"]
-    }
+  // CRÍTICO: Headers corretos para SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',  // OBRIGATÓRIO
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'  // Desabilita buffering no nginx/proxies
+  });
+
+  // Gerar session ID único
+  const sessionId = uuidv4();
+  
+  // IMPORTANTE: Formato correto do evento endpoint
+  res.write(`event: endpoint\n`);
+  res.write(`data: /messages?sessionId=${sessionId}\n\n`);
+  
+  // Armazenar conexão
+  sseConnections[sessionId] = res;
+  sessions[sessionId] = {
+    created: new Date(),
+    lastAccess: new Date()
+  };
+  
+  console.log(`SSE stream estabelecido - SessionId: ${sessionId}`);
+  
+  // Keep-alive para manter conexão ativa
+  const keepAlive = setInterval(() => {
+    res.write(':ping\n\n');
+  }, 30000);
+  
+  // Cleanup quando a conexão fechar
+  req.on('close', () => {
+    console.log(`SSE conexão fechada - SessionId: ${sessionId}`);
+    clearInterval(keepAlive);
+    delete sseConnections[sessionId];
+    delete sessions[sessionId];
   });
 });
 
-// Listagem de ferramentas (Obrigatório para Claude)
-app.get('/mcp/tools', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('anthropic-mcp-version', '2025-03-26');
+// Endpoint para receber mensagens do cliente
+app.post('/messages', async (req, res) => {
+  const sessionId = req.query.sessionId;
   
-  res.json({
-    tools: tools.map(tool => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema
-    }))
-  });
-});
-
-// Endpoint principal (compatível com ambos)
-app.post(['/', '/mcp'], (req, res) => {
+  if (!sessionId) {
+    console.error('Nenhum sessionId fornecido');
+    return res.status(400).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Missing sessionId parameter' },
+      id: req.body.id
+    });
+  }
+  
+  if (!sessions[sessionId]) {
+    console.error(`Sessão não encontrada: ${sessionId}`);
+    return res.status(404).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Session not found' },
+      id: req.body.id
+    });
+  }
+  
+  const { jsonrpc, method, params, id } = req.body;
+  console.log(`[${sessionId}] Método: ${method}`);
+  
+  // Atualizar último acesso
+  sessions[sessionId].lastAccess = new Date();
+  
   try {
-    const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-    const { method, params, id } = req.body;
+    let result;
     
-    console.log(`Método: ${method}, Sessão: ${sessionId || 'nova'}`);
-    
-    // Inicialização (FORMATO CRÍTICO)
-    if (method === 'initialize' && !sessionId) {
-      const newSessionId = uuidv4();
-      sessions[newSessionId] = {
-        createdAt: new Date(),
-        lastAccess: new Date()
-      };
-      
-      // Headers obrigatórios para ambos
-      res.setHeader('Mcp-Session-Id', newSessionId);
-      res.setHeader('anthropic-session-id', newSessionId);
-      res.setHeader('anthropic-mcp-version', '2025-03-26');
-      
-      // Resposta compatível com Inspector e Claude
-      res.json({
-        jsonrpc: '2.0',
-        result: {
-          protocolVersion: serverInfo.protocolVersion,
+    switch (method) {
+      case 'initialize':
+        result = {
+          protocolVersion: '2024-11-05',  // Versão do protocolo SSE
           capabilities: {
-            tools: tools.map(t => t.name)
+            tools: {},
+            logging: {}
           },
           serverInfo: {
             name: serverInfo.name,
             version: serverInfo.version
-          },
-          // Campos adicionais exigidos pelo Claude
-          result: "success",
-          server_id: serverInfo.name,
-          session_id: newSessionId,
-          protocol: "streamable_http"
-        },
-        id
-      });
-      
-      console.log(`Sessão criada: ${newSessionId}`);
-      return;
-    }
-    
-    // Validação de sessão
-    if (!sessionId || !sessions[sessionId]) {
-      return res.status(400).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'ID de sessão inválido'
-        },
-        id: id || null
-      });
-    }
-    
-    // Atualiza último acesso
-    sessions[sessionId].lastAccess = new Date();
-    
-    // Processamento dos métodos
-    let result;
-    switch (method) {
+          }
+        };
+        break;
+        
       case 'tools/list':
         result = { tools };
         break;
         
       case 'tools/call':
-        if (!params || !params.name) {
-          throw new Error('Parâmetros inválidos');
-        }
-        result = executeTool(params.name, params.arguments || {});
+        result = executeTool(params.name, params.arguments);
         break;
         
       case 'logging/setLevel':
+        result = {};
+        break;
+        
       case 'notifications/initialized':
         result = {};
         break;
         
       default:
-        return res.status(404).json({
+        return res.json({
           jsonrpc: '2.0',
-          error: {
-            code: -32601,
-            message: `Método não suportado: ${method}`
-          },
+          error: { code: -32601, message: `Method not found: ${method}` },
           id
         });
     }
@@ -215,113 +196,61 @@ app.post(['/', '/mcp'], (req, res) => {
     });
     
   } catch (error) {
-    console.error('Erro no endpoint principal:', error);
+    console.error(`Erro ao processar ${method}:`, error);
     res.status(500).json({
       jsonrpc: '2.0',
-      error: {
-        code: -32603,
-        message: error.message
-      },
-      id: req.body?.id || null
+      error: { code: -32603, message: error.message },
+      id
     });
   }
 });
 
-// Endpoint SSE (para Inspector)
-app.get('/mcp', (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-  
-  if (!sessionId || !sessions[sessionId]) {
-    return res.status(400).send('ID de sessão inválido');
-  }
-  
-  // Configura headers SSE
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-  });
-  
-  // Envia evento de conexão
-  res.write('event: connected\ndata: {}\n\n');
-  
-  // Mantém a conexão ativa
-  const keepAlive = setInterval(() => {
-    res.write(':keepalive\n\n');
-  }, 30000);
-  
-  // Trata fechamento da conexão
-  req.on('close', () => {
-    clearInterval(keepAlive);
-    console.log(`Conexão SSE fechada para sessão: ${sessionId}`);
-  });
-});
-
-// Fechamento de sessão
-app.delete(['/', '/mcp'], (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-  
-  if (sessionId && sessions[sessionId]) {
-    delete sessions[sessionId];
-    console.log(`Sessão finalizada: ${sessionId}`);
-    return res.status(200).json({ result: "success" });
-  }
-  
-  res.status(404).json({ error: 'Sessão não encontrada' });
-});
-
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
-
-// Endpoint raiz
-app.get('/', (req, res) => {
   res.json({
-    status: 'online',
-    server: serverInfo.name,
-    version: serverInfo.version,
-    protocol: 'streamable_http'
+    status: 'healthy',
+    protocol: 'SSE',
+    activeSessions: Object.keys(sessions).length
   });
 });
 
-// Limpeza de sessões inativas
+// Raiz retorna informações do servidor
+app.get('/', (req, res) => {
+  res.json({
+    name: serverInfo.name,
+    version: serverInfo.version,
+    protocol: 'SSE (Server-Sent Events)',
+    endpoint: '/sse',
+    documentation: 'Compatible with Anthropic MCP partners standard'
+  });
+});
+
+// Limpeza de sessões antigas
 setInterval(() => {
   const now = new Date();
-  Object.keys(sessions).forEach(id => {
-    if (now - sessions[id].lastAccess > 30 * 60 * 1000) {
-      delete sessions[id];
+  const timeout = 30 * 60 * 1000; // 30 minutos
+  
+  Object.entries(sessions).forEach(([id, session]) => {
+    if (now - session.lastAccess > timeout) {
       console.log(`Sessão expirada: ${id}`);
+      delete sessions[id];
+      if (sseConnections[id]) {
+        sseConnections[id].end();
+        delete sseConnections[id];
+      }
     }
   });
 }, 5 * 60 * 1000);
 
-// Inicialização do servidor
+// Start server
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`
-███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ 
-██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗
-███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝
-╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗
-███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║
-╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝
-                                                  
-==================================================
-  Servidor MCP Remoto (Claude + Inspector)
-  Porta: ${PORT}
-  Protocolo: Streamable HTTP (2025-03-26)
-==================================================
-Endpoints críticos:
-  GET  /.well-known/mcp
-  GET  /mcp/tools
-  POST /mcp
-  GET  /mcp (SSE)
-  DELETE /mcp
-==================================================
-`);
+===============================================
+MCP Server SSE - Padrão Anthropic Partners
+Port: ${PORT}
+Endpoint: /sse (como Asana, Linear, etc.)
+Protocol: SSE (Server-Sent Events)
+===============================================
+  `);
 });
-
-// Configurações para evitar timeout
-server.keepAliveTimeout = 30000;
-server.headersTimeout = 35000;
