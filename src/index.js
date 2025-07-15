@@ -4,34 +4,44 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-// Configure CORS - suporta ambos os headers
+// Configuração crítica de CORS
 app.use(cors({
   origin: '*',
-  exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id', 'anthropic-mcp-version']
+  exposedHeaders: ['Mcp-Session-Id', 'anthropic-session-id']
 }));
 
 app.use(express.json());
 
-// Logging
+// Logging aprimorado
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const logId = Math.random().toString(36).substring(2, 8);
+  console.log(`[${logId}] ${new Date().toISOString()} ${req.method} ${req.url}`);
+  
   if (req.body && Object.keys(req.body).length > 0) {
-    console.log('Body:', JSON.stringify(req.body));
+    console.log(`[${logId}] Body:`, JSON.stringify(req.body));
   }
+  
+  res.on('finish', () => {
+    console.log(`[${logId}] Response: ${res.statusCode}`);
+  });
+  
   next();
 });
 
-// Store sessions
+// Armazenamento de sessões
 const sessions = {};
 
-// Server info
+// Informações do servidor (compatível com ambos)
 const serverInfo = {
   name: 'mcp-server-remoto',
   version: '1.0.0',
-  protocolVersion: '2025-03-26'
+  protocolVersion: '2025-03-26',
+  capabilities: {
+    tools: {}
+  }
 };
 
-// Tools
+// Ferramentas
 const tools = [
   {
     name: 'hello_world',
@@ -54,7 +64,7 @@ const tools = [
   }
 ];
 
-// Tool execution
+// Execução de ferramentas
 function executeTool(toolName, args = {}) {
   switch (toolName) {
     case 'hello_world':
@@ -69,20 +79,20 @@ function executeTool(toolName, args = {}) {
       return {
         content: [{
           type: 'text',
-          text: `✅ Conexão estabelecida!\nServidor: ${serverInfo.name}\nVersão: ${serverInfo.version}\nTimestamp: ${new Date().toISOString()}`
+          text: `✅ Conexão estabelecida!\nServidor: ${serverInfo.name}\nVersão: ${serverInfo.version}`
         }]
       };
     
     default:
-      throw new Error(`Tool not found: ${toolName}`);
+      throw new Error(`Ferramenta não encontrada: ${toolName}`);
   }
 }
 
-// ===== ENDPOINTS PARA O CLAUDE (sugestões do DeepSeek) =====
-
-// Endpoint de descoberta para o Claude
+// Endpoint de descoberta (Obrigatório para Claude)
 app.get('/.well-known/mcp', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('anthropic-mcp-version', '2025-03-26');
+  
   res.json({
     version: '2025-03-26',
     capabilities: {
@@ -93,9 +103,11 @@ app.get('/.well-known/mcp', (req, res) => {
   });
 });
 
-// Endpoint GET para listar ferramentas (Claude)
+// Listagem de ferramentas (Obrigatório para Claude)
 app.get('/mcp/tools', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('anthropic-mcp-version', '2025-03-26');
+  
   res.json({
     tools: tools.map(tool => ({
       name: tool.name,
@@ -105,17 +117,15 @@ app.get('/mcp/tools', (req, res) => {
   });
 });
 
-// ===== ENDPOINT PRINCIPAL - Suporta Inspector e Claude =====
-
+// Endpoint principal (compatível com ambos)
 app.post(['/', '/mcp'], (req, res) => {
   try {
-    // Suporta ambos os headers de sessão
     const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
-    const { jsonrpc, method, params, id } = req.body;
+    const { method, params, id } = req.body;
     
     console.log(`Método: ${method}, Sessão: ${sessionId || 'nova'}`);
     
-    // Initialize
+    // Inicialização (FORMATO CRÍTICO)
     if (method === 'initialize' && !sessionId) {
       const newSessionId = uuidv4();
       sessions[newSessionId] = {
@@ -123,25 +133,24 @@ app.post(['/', '/mcp'], (req, res) => {
         lastAccess: new Date()
       };
       
-      // Envia ambos os headers para compatibilidade
+      // Headers obrigatórios para ambos
       res.setHeader('Mcp-Session-Id', newSessionId);
       res.setHeader('anthropic-session-id', newSessionId);
       res.setHeader('anthropic-mcp-version', '2025-03-26');
       
-      // Resposta híbrida - funciona para ambos
+      // Resposta compatível com Inspector e Claude
       res.json({
         jsonrpc: '2.0',
         result: {
-          // Para o Inspector
           protocolVersion: serverInfo.protocolVersion,
           capabilities: {
-            tools: {}
+            tools: tools.map(t => t.name)
           },
           serverInfo: {
             name: serverInfo.name,
             version: serverInfo.version
           },
-          // Para o Claude (adicionais)
+          // Campos adicionais exigidos pelo Claude
           result: "success",
           server_id: serverInfo.name,
           session_id: newSessionId,
@@ -154,23 +163,22 @@ app.post(['/', '/mcp'], (req, res) => {
       return;
     }
     
-    // Validate session
+    // Validação de sessão
     if (!sessionId || !sessions[sessionId]) {
-      res.status(400).json({
+      return res.status(400).json({
         jsonrpc: '2.0',
         error: {
           code: -32000,
-          message: 'Bad Request: No valid session ID provided'
+          message: 'ID de sessão inválido'
         },
         id: id || null
       });
-      return;
     }
     
-    // Update last access
+    // Atualiza último acesso
     sessions[sessionId].lastAccess = new Date();
     
-    // Handle methods
+    // Processamento dos métodos
     let result;
     switch (method) {
       case 'tools/list':
@@ -178,27 +186,26 @@ app.post(['/', '/mcp'], (req, res) => {
         break;
         
       case 'tools/call':
-        result = executeTool(params.name, params.arguments);
+        if (!params || !params.name) {
+          throw new Error('Parâmetros inválidos');
+        }
+        result = executeTool(params.name, params.arguments || {});
         break;
         
       case 'logging/setLevel':
-        result = {};
-        break;
-        
       case 'notifications/initialized':
         result = {};
         break;
         
       default:
-        res.json({
+        return res.status(404).json({
           jsonrpc: '2.0',
           error: {
             code: -32601,
-            message: `Method not found: ${method}`
+            message: `Método não suportado: ${method}`
           },
           id
         });
-        return;
     }
     
     res.json({
@@ -208,7 +215,7 @@ app.post(['/', '/mcp'], (req, res) => {
     });
     
   } catch (error) {
-    console.error('Erro:', error);
+    console.error('Erro no endpoint principal:', error);
     res.status(500).json({
       jsonrpc: '2.0',
       error: {
@@ -220,72 +227,101 @@ app.post(['/', '/mcp'], (req, res) => {
   }
 });
 
-// SSE endpoint (se necessário)
-app.get(['/mcp'], (req, res) => {
+// Endpoint SSE (para Inspector)
+app.get('/mcp', (req, res) => {
   const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
   
   if (!sessionId || !sessions[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
-    return;
+    return res.status(400).send('ID de sessão inválido');
   }
   
+  // Configura headers SSE
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
+    'Connection': 'keep-alive'
   });
   
-  res.write(':connected\n\n');
+  // Envia evento de conexão
+  res.write('event: connected\ndata: {}\n\n');
   
+  // Mantém a conexão ativa
   const keepAlive = setInterval(() => {
     res.write(':keepalive\n\n');
   }, 30000);
   
+  // Trata fechamento da conexão
   req.on('close', () => {
     clearInterval(keepAlive);
-    console.log(`SSE closed: ${sessionId}`);
+    console.log(`Conexão SSE fechada para sessão: ${sessionId}`);
   });
 });
 
-// DELETE session
+// Fechamento de sessão
 app.delete(['/', '/mcp'], (req, res) => {
   const sessionId = req.headers['mcp-session-id'] || req.headers['anthropic-session-id'];
   
   if (sessionId && sessions[sessionId]) {
     delete sessions[sessionId];
-    console.log(`Sessão encerrada: ${sessionId}`);
+    console.log(`Sessão finalizada: ${sessionId}`);
+    return res.status(200).json({ result: "success" });
   }
   
-  res.status(200).json({ result: "success" });
+  res.status(404).json({ error: 'Sessão não encontrada' });
 });
 
-// Outros endpoints
-app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.json({ status: 'ok', server: serverInfo.name }));
+// Health check
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
-// Cleanup
+// Endpoint raiz
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    server: serverInfo.name,
+    version: serverInfo.version,
+    protocol: 'streamable_http'
+  });
+});
+
+// Limpeza de sessões inativas
 setInterval(() => {
   const now = new Date();
-  Object.entries(sessions).forEach(([id, session]) => {
-    if (now - session.lastAccess > 30 * 60 * 1000) {
+  Object.keys(sessions).forEach(id => {
+    if (now - sessions[id].lastAccess > 30 * 60 * 1000) {
       delete sessions[id];
       console.log(`Sessão expirada: ${id}`);
     }
   });
 }, 5 * 60 * 1000);
 
-// Start server
+// Inicialização do servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
-===============================================
-MCP Server - Híbrido (Inspector + Claude)
-Port: ${PORT}
-===============================================
-Suporta:
-- MCP Inspector (testado e funcionando)
-- Claude Desktop (com melhorias do DeepSeek)
-===============================================
-  `);
+███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ 
+██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗
+███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝
+╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗
+███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║
+╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝
+                                                  
+==================================================
+  Servidor MCP Remoto (Claude + Inspector)
+  Porta: ${PORT}
+  Protocolo: Streamable HTTP (2025-03-26)
+==================================================
+Endpoints críticos:
+  GET  /.well-known/mcp
+  GET  /mcp/tools
+  POST /mcp
+  GET  /mcp (SSE)
+  DELETE /mcp
+==================================================
+`);
 });
+
+// Configurações para evitar timeout
+server.keepAliveTimeout = 30000;
+server.headersTimeout = 35000;
