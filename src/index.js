@@ -27,7 +27,7 @@ const sessions = {};
 const tools = [
   {
     name: 'hello_world',
-    description: 'Retorna uma mensagem de boas-vindas',
+    description: 'Retorna uma mensagem de boas-vindas.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,7 +41,7 @@ const tools = [
   },
   {
     name: 'test_connection',
-    description: 'Testa a conexão com o servidor',
+    description: 'Testa a conexão com o servidor.',
     inputSchema: {
       type: 'object',
       properties: {},
