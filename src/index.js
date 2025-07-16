@@ -5,7 +5,7 @@ const { Pool } = require('pg');
 
 const app = express();
 
-// CORS simples
+// CORS atualizado
 app.use(cors({
   origin: '*',
   exposedHeaders: ['Mcp-Session-Id']
@@ -13,10 +13,11 @@ app.use(cors({
 
 app.use(express.json());
 
-// Logging básico
+// Logging melhorado
 app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
   if (req.body?.method) {
-    console.log(`[${new Date().toISOString()}] ${req.body.method}`);
+    console.log(`[${timestamp}] ${req.method} ${req.url} - Method: ${req.body.method}`);
   }
   next();
 });
@@ -30,7 +31,7 @@ const pool = new Pool({
   port: process.env.DB_PORT || 5432,
 });
 
-// Schema do banco (você vai colar aqui)
+// Schema do banco
 const schema = `
 -- Tabela contendo informações sobre litologia
 CREATE TABLE welllithology_view (
@@ -85,10 +86,11 @@ async function query(sql) {
 // Armazenamento de sessões
 const sessions = {};
 
-// Definição das ferramentas
+// Definição das ferramentas - ATUALIZADO com title e outputSchema
 const tools = [
   {
     name: 'fetch_well_database_schema',
+    title: 'Buscar Schema do Banco', // NOVO: title adicionado
     description: `Returns the full and authoritative schema of the well/basin database.
     
     Usage:
@@ -101,10 +103,27 @@ const tools = [
       type: 'object',
       properties: {},
       required: []
+    },
+    // NOVO: outputSchema para validação
+    outputSchema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['text'] },
+              text: { type: 'string' }
+            }
+          }
+        }
+      }
     }
   },
   {
     name: 'query_well_database',
+    title: 'Consultar Banco de Dados', // NOVO: title
     description: `You are a PostgreSQL assistant specialized in querying geological well and basin data.
 
     You will receive natural language questions and must respond by generating only valid SELECT statements.
@@ -130,6 +149,7 @@ const tools = [
   },
   {
     name: 'generate_lithological_profile',
+    title: 'Gerar Perfil Litológico', // NOVO: title
     description: `Generates a lithological profile visualization for a specific well. 
     This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
     DO NOT query the database first - this tool handles everything internally.
@@ -147,96 +167,129 @@ const tools = [
         }
       },
       required: ['wellName']
+    },
+    // NOVO: annotations para comportamento da ferramenta
+    annotations: {
+      audience: ['user', 'assistant'],
+      priority: 1.0
     }
   }
 ];
 
-// Execução das ferramentas
+// Execução das ferramentas - ATUALIZADO com isError e structuredContent
 async function executeTool(toolName, args = {}) {
-  switch (toolName) {
-    case 'fetch_well_database_schema':
-      return {
-        content: [{
-          type: 'text',
-          text: schema
-        }]
-      };
-    
-    case 'query_well_database':
-      try {
-        const data = await query(args.sql);
+  try {
+    switch (toolName) {
+      case 'fetch_well_database_schema':
         return {
           content: [{
             type: 'text',
-            text: JSON.stringify(data, null, 2)
-          }]
+            text: schema
+          }],
+          isError: false // NOVO: indicador de erro
         };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Erro ao executar consulta: ${err.message}`
-          }]
-        };
-      }
-    
-    case 'generate_lithological_profile':
-      try {
-        const encodedWellName = encodeURIComponent(args.wellName);
-        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodedWellName}`;
-        
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            "Accept": "text/html"
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error(`API returned error: ${response.status} ${response.statusText}`);
+      
+      case 'query_well_database':
+        try {
+          const data = await query(args.sql);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(data, null, 2)
+            }],
+            // NOVO: structuredContent para dados estruturados
+            structuredContent: data,
+            isError: false
+          };
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Erro ao executar consulta: ${err.message}`
+            }],
+            isError: true // NOVO: marcando como erro
+          };
         }
-        
-        const html = await response.text();
-        
-        return {
-          content: [{
-            type: 'text',
-            text: html
-          }]
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Error generating lithological profile: ${err.message}`
-          }]
-        };
-      }
-    
-    default:
-      throw new Error(`Tool not found: ${toolName}`);
+      
+      case 'generate_lithological_profile':
+        try {
+          const encodedWellName = encodeURIComponent(args.wellName);
+          const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodedWellName}`;
+          
+          const response = await fetch(url, {
+            method: "GET",
+            headers: {
+              "Accept": "text/html"
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error(`API returned error: ${response.status} ${response.statusText}`);
+          }
+          
+          const html = await response.text();
+          
+          return {
+            content: [{
+              type: 'text',
+              text: html,
+              // NOVO: annotations para conteúdo
+              annotations: {
+                audience: ['user'],
+                priority: 1.0
+              }
+            }],
+            isError: false
+          };
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Error generating lithological profile: ${err.message}`
+            }],
+            isError: true
+          };
+        }
+      
+      default:
+        throw new Error(`Tool not found: ${toolName}`);
+    }
+  } catch (error) {
+    // NOVO: tratamento de erro padrão
+    return {
+      content: [{
+        type: 'text',
+        text: `Unexpected error: ${error.message}`
+      }],
+      isError: true
+    };
   }
 }
 
-// ENDPOINT PRINCIPAL
+// ENDPOINT PRINCIPAL - ATUALIZADO
 app.post('/mcp', async (req, res) => {
   const sessionId = req.headers['mcp-session-id'];
   const { jsonrpc, method, params, id } = req.body;
   
   try {
-    // Initialize
+    // Initialize - ATUALIZADO com listChanged
     if (method === 'initialize') {
       const newSessionId = uuidv4();
-      sessions[newSessionId] = { created: new Date() };
+      sessions[newSessionId] = { 
+        created: new Date(),
+        protocolVersion: '2025-06-18' // NOVO: versão do protocolo
+      };
       
       res.setHeader('Mcp-Session-Id', newSessionId);
       
       return res.json({
         jsonrpc: '2.0',
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-06-18', // ATUALIZADO
           capabilities: {
-            tools: {},
+            tools: {
+              listChanged: false // NOVO: indicador de mudança na lista
+            },
             prompts: {},
             resources: {}
           },
@@ -249,7 +302,7 @@ app.post('/mcp', async (req, res) => {
       });
     }
     
-    // Validar sessão para outros métodos
+    // Validar sessão
     if (!sessionId || !sessions[sessionId]) {
       return res.status(400).json({
         jsonrpc: '2.0',
@@ -261,19 +314,34 @@ app.post('/mcp', async (req, res) => {
       });
     }
     
+    // Atualizar último acesso
+    sessions[sessionId].lastAccess = new Date();
+    
     // Processar métodos
     let result;
     switch (method) {
       case 'tools/list':
-        result = { tools };
+        // NOVO: suporte a paginação
+        const cursor = params?.cursor;
+        // Por enquanto, retornamos todas as ferramentas
+        result = { 
+          tools,
+          nextCursor: null // Sem paginação por enquanto
+        };
         break;
         
       case 'prompts/list':
-        result = { prompts: [] };
+        result = { 
+          prompts: [],
+          nextCursor: null
+        };
         break;
         
       case 'resources/list':
-        result = { resources: [] };
+        result = { 
+          resources: [],
+          nextCursor: null
+        };
         break;
         
       case 'tools/call':
@@ -302,29 +370,63 @@ app.post('/mcp', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error('Error:', error);
     res.status(500).json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
-        message: error.message
+        message: error.message,
+        data: process.env.NODE_ENV === 'development' ? error.stack : undefined
       },
       id
     });
   }
 });
 
-// Health check
-app.get('/health', (req, res) => res.send('OK'));
+// Health check com mais informações
+app.get('/health', async (req, res) => {
+  try {
+    // Testar conexão com banco
+    await pool.query('SELECT 1');
+    res.json({ 
+      status: 'healthy',
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message
+    });
+  }
+});
 
-// Informações do servidor
+// Informações do servidor - ATUALIZADO
 app.get('/', (req, res) => {
   res.json({
     name: 'mcp-well-database',
     version: '1.0.0',
-    endpoint: '/mcp'
+    protocolVersion: '2025-06-18',
+    endpoint: '/mcp',
+    capabilities: ['tools', 'prompts', 'resources'],
+    tools: tools.map(t => ({ name: t.name, title: t.title }))
   });
 });
+
+// Cleanup de sessões antigas
+setInterval(() => {
+  const now = new Date();
+  const timeout = 30 * 60 * 1000; // 30 minutos
+  
+  Object.entries(sessions).forEach(([id, session]) => {
+    const lastActivity = session.lastAccess || session.created;
+    if (now - lastActivity > timeout) {
+      delete sessions[id];
+      console.log(`Session ${id} expired and removed`);
+    }
+  });
+}, 5 * 60 * 1000); // Executar a cada 5 minutos
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
@@ -332,5 +434,7 @@ app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`🔗 Endpoint: /mcp`);
+  console.log(`📋 Protocol: 2025-06-18`);
   console.log(`📊 Database: ${process.env.DB_NAME || 'DEBUG_REATE'}`);
+  console.log(`🔧 Tools: ${tools.length}`);
 });
