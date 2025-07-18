@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
@@ -29,6 +31,25 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT
 });
+
+// Debug das variáveis
+console.log('🔍 Configuração do banco:');
+console.log('Host:', process.env.DB_HOST || 'NÃO DEFINIDO');
+console.log('Port:', process.env.DB_PORT || 'NÃO DEFINIDO');
+console.log('Database:', process.env.DB_NAME || 'NÃO DEFINIDO');
+console.log('User:', process.env.DB_USER || 'NÃO DEFINIDO');
+
+// Testar conexão
+pool.connect()
+  .then(client => {
+    console.log('✅ Banco de dados conectado com sucesso!');
+    client.release();
+  })
+  .catch(err => {
+    console.error('❌ Falha na conexão com o banco:');
+    console.error('Mensagem:', err.message);
+    if (err.code) console.error('Código:', err.code);
+  });
 
 // Schema do banco (você vai colar aqui)
 const schema = `
