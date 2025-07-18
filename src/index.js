@@ -23,11 +23,11 @@ app.use((req, res, next) => {
 
 // Configuração do banco de dados
 const pool = new Pool({
-  user: process.env.DB_USER || "postgres",
-  host: process.env.DB_HOST || "localhost",
-  database: process.env.DB_NAME || "DEBUG_REATE",
-  password: process.env.DB_PASSWORD || "k2123",
-  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 5432
 });
 
 // Schema do banco (você vai colar aqui)
@@ -332,5 +332,4 @@ app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`🔗 Endpoint: /mcp`);
-  console.log(`📊 Database: ${process.env.DB_NAME || 'DEBUG_REATE'}`);
 });
