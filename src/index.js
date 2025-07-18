@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -29,7 +30,12 @@ const pool = new Pool({
   host: process.env.DB_HOST,
   database: process.env.DB_NAME,
   password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT
+  port: process.env.DB_PORT,
+  // Adicionar timeouts e configurações de reconexão
+  connectionTimeoutMillis: 10000, // 10 segundos para timeout de conexão
+  idleTimeoutMillis: 30000, // 30 segundos idle timeout
+  max: 20, // máximo de conexões no pool
+  allowExitOnIdle: true
 });
 
 // Debug das variáveis
@@ -39,19 +45,36 @@ console.log('Port:', process.env.DB_PORT || 'NÃO DEFINIDO');
 console.log('Database:', process.env.DB_NAME || 'NÃO DEFINIDO');
 console.log('User:', process.env.DB_USER || 'NÃO DEFINIDO');
 
+// Estado da conexão
+let dbConnected = false;
+
 // Testar conexão
-pool.connect()
-  .then(client => {
+async function testConnection() {
+  try {
+    const client = await pool.connect();
     console.log('✅ Banco de dados conectado com sucesso!');
+    dbConnected = true;
     client.release();
-  })
-  .catch(err => {
+  } catch (err) {
     console.error('❌ Falha na conexão com o banco:');
     console.error('Mensagem:', err.message);
     if (err.code) console.error('Código:', err.code);
-  });
+    dbConnected = false;
+  }
+}
 
-// Schema do banco (você vai colar aqui)
+// Testar conexão na inicialização
+testConnection();
+
+// Tentar reconectar a cada 30 segundos se desconectado
+setInterval(() => {
+  if (!dbConnected) {
+    console.log('🔄 Tentando reconectar ao banco...');
+    testConnection();
+  }
+}, 30000);
+
+// Schema do banco
 const schema = `
 -- Tabela contendo informações sobre litologia
 CREATE TABLE welllithology_view (
@@ -92,14 +115,39 @@ CREATE TABLE wellmeasuredunits_view (
   "Data" DATE
 );`;
 
-// Função para executar queries
+// Função para executar queries com melhor tratamento de erro
 async function query(sql) {
-  const client = await pool.connect();
+  if (!dbConnected) {
+    throw new Error('Banco de dados não está conectado. Verifique se o servidor PostgreSQL está acessível e as credenciais estão corretas.');
+  }
+  
+  let client;
   try {
-    const result = await client.query(sql);
-    return result.rows;
+    // Timeout de 30 segundos para a query
+    client = await pool.connect();
+    const result = await client.query({
+      text: sql,
+      rowMode: 'array',
+      timeout: 30000 // 30 segundos
+    });
+    
+    // Converter de volta para objetos
+    const rows = result.rows.map(row => {
+      const obj = {};
+      result.fields.forEach((field, i) => {
+        obj[field.name] = row[i];
+      });
+      return obj;
+    });
+    
+    return rows;
+  } catch (err) {
+    console.error('Erro na query:', err.message);
+    throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
@@ -185,7 +233,14 @@ async function executeTool(toolName, args = {}) {
     
     case 'query_well_database':
       try {
+        console.log('🔍 Executando query:', args.sql);
+        const startTime = Date.now();
+        
         const data = await query(args.sql);
+        
+        const duration = Date.now() - startTime;
+        console.log(`✅ Query executada em ${duration}ms, ${data.length} linhas retornadas`);
+        
         return {
           content: [{
             type: 'text',
@@ -193,10 +248,11 @@ async function executeTool(toolName, args = {}) {
           }]
         };
       } catch (err) {
+        console.error('❌ Erro na query:', err);
         return {
           content: [{
             type: 'text',
-            text: `Erro ao executar consulta: ${err.message}`
+            text: `Erro ao executar consulta: ${err.message}\n\nVerifique se:\n1. O banco de dados está acessível\n2. As credenciais estão corretas\n3. O servidor permite conexões externas\n4. A porta ${process.env.DB_PORT} está aberta`
           }]
         };
       }
@@ -206,11 +262,14 @@ async function executeTool(toolName, args = {}) {
         const encodedWellName = encodeURIComponent(args.wellName);
         const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodedWellName}`;
         
+        console.log('🔍 Buscando perfil litológico:', url);
+        
         const response = await fetch(url, {
           method: "GET",
           headers: {
             "Accept": "text/html"
-          }
+          },
+          signal: AbortSignal.timeout(30000) // 30 segundos timeout
         });
         
         if (!response.ok) {
@@ -218,6 +277,7 @@ async function executeTool(toolName, args = {}) {
         }
         
         const html = await response.text();
+        console.log('✅ Perfil litológico recebido com sucesso');
         
         return {
           content: [{
@@ -226,6 +286,7 @@ async function executeTool(toolName, args = {}) {
           }]
         };
       } catch (err) {
+        console.error('❌ Erro ao gerar perfil:', err);
         return {
           content: [{
             type: 'text',
@@ -335,15 +396,26 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/health', (req, res) => res.send('OK'));
+// Health check com status do banco
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    database: dbConnected ? 'Connected' : 'Disconnected'
+  });
+});
 
 // Informações do servidor
 app.get('/', (req, res) => {
   res.json({
     name: 'mcp-well-database',
     version: '1.0.0',
-    endpoint: '/mcp'
+    endpoint: '/mcp',
+    database: {
+      connected: dbConnected,
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME
+    }
   });
 });
 
