@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 
 const express = require('express');
@@ -35,7 +34,9 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000, // 10 segundos para timeout de conexão
   idleTimeoutMillis: 30000, // 30 segundos idle timeout
   max: 20, // máximo de conexões no pool
-  allowExitOnIdle: true
+  allowExitOnIdle: true,
+  // Tentar com e sem SSL
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
 });
 
 // Debug das variáveis
@@ -51,14 +52,25 @@ let dbConnected = false;
 // Testar conexão
 async function testConnection() {
   try {
+    console.log(`🔌 Tentando conectar em ${process.env.DB_HOST}:${process.env.DB_PORT}...`);
+    const startTime = Date.now();
+    
     const client = await pool.connect();
-    console.log('✅ Banco de dados conectado com sucesso!');
+    const elapsed = Date.now() - startTime;
+    
+    console.log(`✅ Banco de dados conectado com sucesso em ${elapsed}ms!`);
+    
+    // Testar uma query simples
+    const result = await client.query('SELECT current_database(), current_user, version()');
+    console.log('📊 Informações do banco:', result.rows[0]);
+    
     dbConnected = true;
     client.release();
   } catch (err) {
     console.error('❌ Falha na conexão com o banco:');
     console.error('Mensagem:', err.message);
     if (err.code) console.error('Código:', err.code);
+    console.error('Stack:', err.stack);
     dbConnected = false;
   }
 }
@@ -417,6 +429,56 @@ app.get('/', (req, res) => {
       database: process.env.DB_NAME
     }
   });
+});
+
+// Endpoint de teste de conexão manual
+app.get('/test-connection', async (req, res) => {
+  console.log('🧪 Teste manual de conexão iniciado...');
+  
+  const testPool = new Pool({
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    port: process.env.DB_PORT,
+    connectionTimeoutMillis: 5000, // 5 segundos apenas para o teste
+    max: 1
+  });
+  
+  try {
+    const startTime = Date.now();
+    const client = await testPool.connect();
+    const connectTime = Date.now() - startTime;
+    
+    const result = await client.query('SELECT NOW() as current_time');
+    client.release();
+    await testPool.end();
+    
+    res.json({
+      success: true,
+      connectTime: `${connectTime}ms`,
+      serverTime: result.rows[0].current_time,
+      config: {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER
+      }
+    });
+  } catch (err) {
+    await testPool.end();
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      config: {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER
+      }
+    });
+  }
 });
 
 // Iniciar servidor
