@@ -1,4 +1,4 @@
-const { tools, schema } = require('./utils/utils');
+const { tools, schema } = require('./utils');
 require('dotenv').config();
 
 const express = require('express');
