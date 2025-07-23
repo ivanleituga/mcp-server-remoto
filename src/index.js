@@ -1,4 +1,7 @@
-const { tools, schema } = require('./utils');
+console.log('__dirname:', __dirname);
+console.log('process.cwd():', process.cwd());
+
+const { tools, schema } = require('./utils/utils');
 require('dotenv').config();
 
 const express = require('express');
