@@ -12,12 +12,19 @@ try {
   console.log('❌ Erro ao carregar utils:', err.message);
   // Se falhar, tenta outros caminhos
   try {
-    ({ tools, schema } = require('../utils/utils'));
+    ({ tools, schema } = require('../../utils/utils')); // Volta 2 níveis
+    console.log('✅ Utils carregado com ../../utils/utils');
   } catch (err2) {
-    console.log('❌ Também falhou com ../utils/utils');
-    // Em último caso, define inline temporariamente
-    tools = []; // coloque o array de tools aqui
-    schema = ''; // coloque o schema aqui
+    console.log('❌ Também falhou com ../../utils/utils');
+    // Tenta mais um
+    try {
+      ({ tools, schema } = require('../utils/utils')); // Volta 1 nível
+      console.log('✅ Utils carregado com ../utils/utils');
+    } catch (err3) {
+      console.log('❌ Todos os caminhos falharam');
+      tools = []; // coloque o array de tools aqui
+      schema = ''; // coloque o schema aqui
+    }
   }
 }
 
