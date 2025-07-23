@@ -1,34 +1,5 @@
-// No início do index.js
-console.log('__dirname:', __dirname);
-console.log('process.cwd():', process.cwd());
-console.log('Tentando carregar utils...');
+const { tools, schema } = require('../utils/utils');
 
-let tools, schema;
-try {
-  // Tenta o caminho normal primeiro
-  ({ tools, schema } = require('./utils/utils'));
-  console.log('✅ Utils carregado com sucesso');
-} catch (err) {
-  console.log('❌ Erro ao carregar utils:', err.message);
-  // Se falhar, tenta outros caminhos
-  try {
-    ({ tools, schema } = require('../../utils/utils')); // Volta 2 níveis
-    console.log('✅ Utils carregado com ../../utils/utils');
-  } catch (err2) {
-    console.log('❌ Também falhou com ../../utils/utils');
-    // Tenta mais um
-    try {
-      ({ tools, schema } = require('../utils/utils')); // Volta 1 nível
-      console.log('✅ Utils carregado com ../utils/utils');
-    } catch (err3) {
-      console.log('❌ Todos os caminhos falharam');
-      tools = []; // coloque o array de tools aqui
-      schema = ''; // coloque o schema aqui
-    }
-  }
-}
-
-// const { tools, schema } = require('./utils/utils');
 require('dotenv').config();
 
 const express = require('express');
