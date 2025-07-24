@@ -1,4 +1,4 @@
-const { tools, schema } = require("../utils/utils");
+const { tools, executeTool } = require("./tools");
 
 require("dotenv").config();
 
@@ -63,41 +63,6 @@ async function query(sql) {
 // Sessões MCP
 const sessions = {};
 
-// Ferramentas
-async function executeTool(toolName, args = {}) {
-  switch (toolName) {
-  case "fetch_well_database_schema":
-    return { content: [{ type: "text", text: schema }] };
-    
-  case "query_well_database":
-    try {
-      const data = await query(args.sql);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
-    }
-    
-  case "generate_lithological_profile":
-    try {
-      const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
-      const response = await fetch(url, {
-        headers: { "Accept": "text/html" },
-        signal: AbortSignal.timeout(30000)
-      });
-        
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-        
-      const html = await response.text();
-      return { content: [{ type: "text", text: html }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }] };
-    }
-    
-  default:
-    throw new Error(`Tool not found: ${toolName}`);
-  }
-}
-
 // Rota MCP principal
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
@@ -143,7 +108,7 @@ app.post("/mcp", async (req, res) => {
       result = { resources: [] };
       break;
     case "tools/call":
-      result = await executeTool(params.name, params.arguments);
+      result = await executeTool(params.name, params.arguments, query);
       break;
     case "notifications/initialized":
       result = {};
