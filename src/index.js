@@ -151,6 +151,10 @@ app.get("/.well-known/mcp-manifest.json", (req, res) => {
       tools: {},
       prompts: {},
       resources: {}
+    },
+    transport: {
+      type: "stdio",
+      endpoint: `${serverUrl}/mcp/stdio`
     }
   });
 });
@@ -237,6 +241,79 @@ app.post("/mcp", async (req, res) => {
     });
   }
 });
+
+// Rota de transporte stdio sobre HTTP
+app.post("/mcp/stdio", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  // Verificar token
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    if (!tempTokens.has(token)) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+  }
+  
+  // Processar comando MCP diretamente
+  const { method, params, id } = req.body;
+  
+  try {
+    // Reutilizar a lógica da rota /mcp principal
+    if (method === "initialize") {
+      const sessionId = uuidv4();
+      sessions[sessionId] = { created: new Date() };
+      
+      return res.json({
+        jsonrpc: "2.0",
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {}, prompts: {}, resources: {} },
+          serverInfo: { name: "mcp-well-database", version: "1.0.0" }
+        },
+        id
+      });
+    }
+    
+    // Para outros métodos, processar normalmente
+    let result;
+    switch (method) {
+    case "tools/list":
+      result = { tools };
+      break;
+    case "prompts/list":
+      result = { prompts: [] };
+      break;
+    case "resources/list":
+      result = { resources: [] };
+      break;
+    case "tools/call":
+      result = await executeTool(params.name, params.arguments, query);
+      break;
+    case "notifications/initialized":
+      result = {};
+      break;
+    default:
+      return res.status(404).json({
+        jsonrpc: "2.0",
+        error: { code: -32601, message: `Method not found: ${method}` },
+        id
+      });
+    }
+    
+    res.json({ jsonrpc: "2.0", result, id });
+    
+  } catch (error) {
+    res.status(500).json({
+      jsonrpc: "2.0",
+      error: { code: -32603, message: error.message },
+      id
+    });
+  }
+});
+
+// Adicione suporte a CORS para OPTIONS
+app.options("/mcp", cors());
+app.options("/mcp/stdio", cors());
 
 // Rota informativa
 app.get("/", (_req, res) => {
