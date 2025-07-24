@@ -10,8 +10,8 @@ const { Pool } = require("pg");
 const app = express();
 
 // Configuração do servidor
-const SERVER_URL = process.env.SERVER_URL || "https://mcp-server-remoto.onrender.com";
-const AUTH_SERVER_URL = process.env.AUTH_SERVER_URL || "https://auth.mcp-well-database.com";
+const SERVER_URL = "https://mcp-server-remoto.onrender.com";
+const AUTH_SERVER_URL = "https://mcp-server-remoto.onrender.com";
 
 // Middlewares
 app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
