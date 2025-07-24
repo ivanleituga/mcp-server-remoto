@@ -9,10 +9,13 @@ const { Pool } = require("pg");
 
 const app = express();
 
+// Configuração do servidor
+const SERVER_URL = process.env.SERVER_URL || "https://mcp-server-remoto.onrender.com";
+const AUTH_SERVER_URL = process.env.AUTH_SERVER_URL || "https://auth.mcp-well-database.com";
+
 // Middlewares
 app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Adicionar para OAuth token endpoint
 
 // Logging MCP
 app.use((req, _res, next) => {
@@ -64,123 +67,62 @@ async function query(sql) {
 // Sessões MCP
 const sessions = {};
 
-// Armazenamento temporário OAuth
-const tempCodes = new Map();
-const tempTokens = new Map();
+// Middleware de autenticação
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  
+  // Se não tem token, retorna 401 com WWW-Authenticate
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401)
+      .header("WWW-Authenticate", `Bearer resource_metadata="${SERVER_URL}/.well-known/oauth-protected-resource"`)
+      .json({
+        error: "unauthorized",
+        error_description: "Authentication required"
+      });
+  }
+  
+  // Em produção, você validaria o JWT aqui
+  // Por enquanto, vamos aceitar qualquer token Bearer
+  const token = authHeader.substring(7);
+  
+  // Simulação de validação de token
+  if (!token || token.length < 10) {
+    return res.status(401)
+      .header("WWW-Authenticate", `Bearer resource_metadata="${SERVER_URL}/.well-known/oauth-protected-resource", error="invalid_token"`)
+      .json({
+        error: "invalid_token",
+        error_description: "The access token is invalid"
+      });
+  }
+  
+  next();
+}
 
-// 1. Rota de autorização OAuth
-app.get("/oauth/authorize", (req, res) => {
-  const { client_id, redirect_uri, state } = req.query;
-  
-  console.log("OAuth authorize request:", { client_id, redirect_uri, state });
-  
-  // Gerar código temporário
-  const code = uuidv4();
-  tempCodes.set(code, { client_id, redirect_uri, created: Date.now() });
-  
-  // Limpar códigos antigos (mais de 10 minutos)
-  for (const [key, value] of tempCodes.entries()) {
-    if (Date.now() - value.created > 600000) {
-      tempCodes.delete(key);
-    }
-  }
-  
-  // Redirecionar com o código
-  const redirectUrl = `${redirect_uri}?code=${code}&state=${state}`;
-  console.log("Redirecting to:", redirectUrl);
-  
-  res.redirect(redirectUrl);
-});
-
-// 2. Rota de token OAuth
-app.post("/oauth/token", (req, res) => {
-  const { code, client_id, grant_type } = req.body;
-  // client_secret poderia ser validado aqui em produção
-  // const { code, client_id, client_secret, grant_type } = req.body;
-  
-  console.log("Token request:", { code, client_id, grant_type });
-  
-  // Verificar o código
-  const codeData = tempCodes.get(code);
-  if (!codeData) {
-    return res.status(400).json({ error: "invalid_code" });
-  }
-  
-  // Em produção, você validaria:
-  // - Se o client_id corresponde ao do código
-  // - Se o client_secret está correto
-  // - Se o grant_type é "authorization_code"
-  
-  // Gerar token
-  const accessToken = uuidv4();
-  tempTokens.set(accessToken, { client_id, created: Date.now() });
-  
-  // Limpar código usado
-  tempCodes.delete(code);
-  
-  // Limpar tokens antigos (mais de 1 hora)
-  for (const [key, value] of tempTokens.entries()) {
-    if (Date.now() - value.created > 3600000) {
-      tempTokens.delete(key);
-    }
-  }
-  
+// 1. Protected Resource Metadata (RFC 9728)
+app.get("/.well-known/oauth-protected-resource", (req, res) => {
   res.json({
-    access_token: accessToken,
-    token_type: "Bearer",
-    expires_in: 3600
+    resource: SERVER_URL,
+    authorization_servers: [AUTH_SERVER_URL],
+    scopes_supported: [
+      "mcp:read",
+      "mcp:write",
+      "tools:execute"
+    ],
+    bearer_methods_supported: ["header"],
+    resource_documentation: "https://github.com/seu-usuario/mcp-well-database",
+    resource_policy_uri: "https://seu-site.com/privacy",
+    resource_contact: ["admin@seu-site.com"]
   });
 });
 
-// 3. Rota de manifest MCP
-app.get("/.well-known/mcp-manifest.json", (req, res) => {
-  const serverUrl = process.env.SERVER_URL || "https://mcp-server-remoto.onrender.com";
-  
-  res.json({
-    name: "Well Database MCP",
-    description: "Query geological well and basin data",
-    version: "1.0.0",
-    auth: {
-      type: "oauth2",
-      authorization_url: `${serverUrl}/oauth/authorize`,
-      token_url: `${serverUrl}/oauth/token`,
-      client_id: "well-database-mcp",
-      scope: "read"
-    },
-    capabilities: {
-      tools: {},
-      prompts: {},
-      resources: {}
-    },
-    transport: {
-      type: "stdio",
-      endpoint: `${serverUrl}/mcp/stdio`
-    }
-  });
-});
-
-// Rota MCP principal
-app.post("/mcp", async (req, res) => {
+// 2. Rota MCP principal com autenticação
+app.post("/mcp", requireAuth, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
-  const authHeader = req.headers["authorization"];
   const { method, params, id } = req.body;
   
   try {
     // Initialize
     if (method === "initialize") {
-      // Verificar token para conexões remotas
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const token = authHeader.substring(7);
-        if (!tempTokens.has(token)) {
-          return res.status(401).json({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Invalid token" },
-            id
-          });
-        }
-        console.log("✅ Token OAuth válido");
-      }
-      
       const newSessionId = uuidv4();
       sessions[newSessionId] = { created: new Date() };
       
@@ -188,9 +130,16 @@ app.post("/mcp", async (req, res) => {
       return res.json({
         jsonrpc: "2.0",
         result: {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, prompts: {}, resources: {} },
-          serverInfo: { name: "mcp-well-database", version: "1.0.0" }
+          protocolVersion: "2025-11-05",
+          capabilities: { 
+            tools: {},
+            prompts: {},
+            resources: {}
+          },
+          serverInfo: { 
+            name: "mcp-well-database",
+            version: "1.0.0"
+          }
         },
         id
       });
@@ -242,78 +191,100 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-// Rota de transporte stdio sobre HTTP
-app.post("/mcp/stdio", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  
-  // Verificar token
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
-    if (!tempTokens.has(token)) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
-  }
-  
-  // Processar comando MCP diretamente
-  const { method, params, id } = req.body;
-  
-  try {
-    // Reutilizar a lógica da rota /mcp principal
-    if (method === "initialize") {
-      const sessionId = uuidv4();
-      sessions[sessionId] = { created: new Date() };
-      
-      return res.json({
-        jsonrpc: "2.0",
-        result: {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, prompts: {}, resources: {} },
-          serverInfo: { name: "mcp-well-database", version: "1.0.0" }
-        },
-        id
-      });
-    }
-    
-    // Para outros métodos, processar normalmente
-    let result;
-    switch (method) {
-    case "tools/list":
-      result = { tools };
-      break;
-    case "prompts/list":
-      result = { prompts: [] };
-      break;
-    case "resources/list":
-      result = { resources: [] };
-      break;
-    case "tools/call":
-      result = await executeTool(params.name, params.arguments, query);
-      break;
-    case "notifications/initialized":
-      result = {};
-      break;
-    default:
-      return res.status(404).json({
-        jsonrpc: "2.0",
-        error: { code: -32601, message: `Method not found: ${method}` },
-        id
-      });
-    }
-    
-    res.json({ jsonrpc: "2.0", result, id });
-    
-  } catch (error) {
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: { code: -32603, message: error.message },
-      id
-    });
-  }
+// 3. Simulação de Authorization Server (APENAS PARA TESTE)
+// Em produção, você usaria um servidor OAuth real como Auth0, Okta, etc.
+const tempCodes = new Map();
+const tempTokens = new Map();
+
+// Metadata do Authorization Server
+app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  res.json({
+    issuer: AUTH_SERVER_URL,
+    authorization_endpoint: `${AUTH_SERVER_URL}/authorize`,
+    token_endpoint: `${AUTH_SERVER_URL}/token`,
+    registration_endpoint: `${AUTH_SERVER_URL}/register`,
+    scopes_supported: ["mcp:read", "mcp:write", "tools:execute"],
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post"]
+  });
 });
 
-// Adicione suporte a CORS para OPTIONS
-app.options("/mcp", cors());
-app.options("/mcp/stdio", cors());
+// Endpoint de autorização (simulado)
+app.get("/authorize", (req, res) => {
+  const { client_id, redirect_uri, state, scope, code_challenge, code_challenge_method } = req.query;
+  
+  console.log("Authorization request:", { client_id, redirect_uri, state, scope });
+  
+  // Gerar código
+  const code = uuidv4();
+  tempCodes.set(code, { 
+    client_id, 
+    redirect_uri,
+    scope,
+    code_challenge,
+    created: Date.now() 
+  });
+  
+  // Redirecionar com código
+  const redirectUrl = `${redirect_uri}?code=${code}&state=${state}`;
+  res.redirect(redirectUrl);
+});
+
+// Endpoint de token (simulado)
+app.post("/token", express.urlencoded({ extended: true }), (req, res) => {
+  const { grant_type, code, client_id, redirect_uri, code_verifier } = req.body;
+  
+  console.log("Token request:", { grant_type, code, client_id });
+  
+  if (grant_type !== "authorization_code") {
+    return res.status(400).json({ error: "unsupported_grant_type" });
+  }
+  
+  const codeData = tempCodes.get(code);
+  if (!codeData || codeData.client_id !== client_id) {
+    return res.status(400).json({ error: "invalid_grant" });
+  }
+  
+  // Em produção, validaria o code_verifier com code_challenge
+  
+  // Gerar token JWT simulado
+  const accessToken = `eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify({
+    sub: "user123",
+    aud: SERVER_URL,
+    scope: codeData.scope || "mcp:read",
+    exp: Math.floor(Date.now() / 1000) + 3600
+  })).toString("base64")}.signature`;
+  
+  tempCodes.delete(code);
+  
+  res.json({
+    access_token: accessToken,
+    token_type: "Bearer",
+    expires_in: 3600,
+    scope: codeData.scope || "mcp:read"
+  });
+});
+
+// Endpoint de registro dinâmico (simulado)
+app.post("/register", (req, res) => {
+  const { client_name, redirect_uris, grant_types, response_types, scope } = req.body;
+  
+  console.log("Client registration:", { client_name, redirect_uris });
+  
+  const client_id = `client_${uuidv4()}`;
+  
+  res.status(201).json({
+    client_id,
+    client_secret: uuidv4(),
+    client_name,
+    redirect_uris,
+    grant_types: grant_types || ["authorization_code"],
+    response_types: response_types || ["code"],
+    scope: scope || "mcp:read"
+  });
+});
 
 // Rota informativa
 app.get("/", (_req, res) => {
@@ -323,18 +294,24 @@ app.get("/", (_req, res) => {
     endpoint: "/mcp",
     status: "OK",
     database: dbConnected ? "Connected" : "Disconnected",
-    oauth: {
-      manifest: "/.well-known/mcp-manifest.json",
-      authorize: "/oauth/authorize",
-      token: "/oauth/token"
-    }
+    protected_resource_metadata: "/.well-known/oauth-protected-resource",
+    authorization_server_metadata: "/.well-known/oauth-authorization-server"
   });
 });
+
+// Configurar authorization server URL baseado no ambiente
+if (process.env.NODE_ENV === "production" && !process.env.AUTH_SERVER_URL) {
+  console.warn("⚠️  AUTH_SERVER_URL não configurado. Usando servidor de autorização embutido para testes.");
+  // Em produção, você deve configurar um servidor OAuth real
+}
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
-  console.log("📋 OAuth endpoints habilitados");
-  console.log("🔗 Manifest disponível em /.well-known/mcp-manifest.json");
+  console.log(`📋 Protected Resource Metadata: ${SERVER_URL}/.well-known/oauth-protected-resource`);
+  console.log(`🔐 Authorization Server: ${AUTH_SERVER_URL}`);
+  if (!process.env.AUTH_SERVER_URL) {
+    console.log("⚠️  Usando authorization server embutido para testes");
+  }
 });
