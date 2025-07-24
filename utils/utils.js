@@ -1,7 +1,7 @@
 // Definição das ferramentas
 const tools = [
   {
-    name: 'fetch_well_database_schema',
+    name: "fetch_well_database_schema",
     description: `Returns the full and authoritative schema of the well/basin database.
     
     Usage:
@@ -11,13 +11,13 @@ const tools = [
     
     Tables are provided in PostgreSQL 'CREATE TABLE' syntax for clarity.`,
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {},
       required: []
     }
   },
   {
-    name: 'query_well_database',
+    name: "query_well_database",
     description: `You are a PostgreSQL assistant specialized in querying geological well and basin data.
 
     You will receive natural language questions and must respond by generating only valid SELECT statements.
@@ -31,18 +31,18 @@ const tools = [
     - Do not include semicolons.
     - Do not generate DDL or DML statements (e.g., CREATE, UPDATE, DELETE, INSERT).`,
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         sql: {
-          type: 'string',
-          description: 'SQL SELECT query, no semicolons, no DDL/DML.'
+          type: "string",
+          description: "SQL SELECT query, no semicolons, no DDL/DML."
         }
       },
-      required: ['sql']
+      required: ["sql"]
     }
   },
   {
-    name: 'generate_lithological_profile',
+    name: "generate_lithological_profile",
     description: `Generates a lithological profile visualization for a specific well. 
     This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
     DO NOT query the database first - this tool handles everything internally.
@@ -52,14 +52,14 @@ const tools = [
     IMPORTANT: Create the artifact with the HTML content EXACTLY as returned by the API,
     without adding, removing, or modifying ANYTHING.`,
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         wellName: {
-          type: 'string',
-          description: 'ONLY the well name (e.g., 2-AA-2-SP, 1-BAR-2-AL, 3-BRSA-123-RJS, etc)'
+          type: "string",
+          description: "ONLY the well name (e.g., 2-AA-2-SP, 1-BAR-2-AL, 3-BRSA-123-RJS, etc)"
         }
       },
-      required: ['wellName']
+      required: ["wellName"]
     }
   }
 ];

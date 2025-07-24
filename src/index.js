@@ -1,16 +1,16 @@
-const { tools, schema } = require('../utils/utils');
+const { tools, schema } = require("../utils/utils");
 
-require('dotenv').config();
+require("dotenv").config();
 
-const express = require('express');
-const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const { Pool } = require('pg');
+const express = require("express");
+const cors = require("cors");
+const { v4: uuidv4 } = require("uuid");
+const { Pool } = require("pg");
 
 const app = express();
 
 // Middlewares
-app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
+app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
 app.use(express.json());
 
 // Logging MCP
@@ -39,16 +39,16 @@ let dbConnected = false;
     const client = await pool.connect();
     client.release();
     dbConnected = true;
-    console.log('✅ Banco de dados conectado');
+    console.log("✅ Banco de dados conectado");
   } catch (err) {
-    console.error('❌ Banco indisponível:', err.message);
+    console.error("❌ Banco indisponível:", err.message);
   }
 })();
 
 // Executar query
 async function query(sql) {
   if (!dbConnected) {
-    throw new Error('Banco de dados não disponível');
+    throw new Error("Banco de dados não disponível");
   }
   
   const client = await pool.connect();
@@ -66,56 +66,56 @@ const sessions = {};
 // Ferramentas
 async function executeTool(toolName, args = {}) {
   switch (toolName) {
-    case 'fetch_well_database_schema':
-      return { content: [{ type: 'text', text: schema }] };
+  case "fetch_well_database_schema":
+    return { content: [{ type: "text", text: schema }] };
     
-    case 'query_well_database':
-      try {
-        const data = await query(args.sql);
-        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-      } catch (err) {
-        return { content: [{ type: 'text', text: `Erro: ${err.message}` }] };
-      }
+  case "query_well_database":
+    try {
+      const data = await query(args.sql);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
+    }
     
-    case 'generate_lithological_profile':
-      try {
-        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
-        const response = await fetch(url, {
-          headers: { "Accept": "text/html" },
-          signal: AbortSignal.timeout(30000)
-        });
+  case "generate_lithological_profile":
+    try {
+      const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
+      const response = await fetch(url, {
+        headers: { "Accept": "text/html" },
+        signal: AbortSignal.timeout(30000)
+      });
         
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
         
-        const html = await response.text();
-        return { content: [{ type: 'text', text: html }] };
-      } catch (err) {
-        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
-      }
+      const html = await response.text();
+      return { content: [{ type: "text", text: html }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }] };
+    }
     
-    default:
-      throw new Error(`Tool not found: ${toolName}`);
+  default:
+    throw new Error(`Tool not found: ${toolName}`);
   }
 }
 
 // Rota MCP principal
-app.post('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
+app.post("/mcp", async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"];
   const { method, params, id } = req.body;
   
   try {
     // Initialize
-    if (method === 'initialize') {
+    if (method === "initialize") {
       const newSessionId = uuidv4();
       sessions[newSessionId] = { created: new Date() };
       
-      res.setHeader('Mcp-Session-Id', newSessionId);
+      res.setHeader("Mcp-Session-Id", newSessionId);
       return res.json({
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: "2024-11-05",
           capabilities: { tools: {}, prompts: {}, resources: {} },
-          serverInfo: { name: 'mcp-well-database', version: '1.0.0' }
+          serverInfo: { name: "mcp-well-database", version: "1.0.0" }
         },
         id
       });
@@ -124,8 +124,8 @@ app.post('/mcp', async (req, res) => {
     // Validar sessão
     if (!sessionId || !sessions[sessionId]) {
       return res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Session required' },
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Session required" },
         id
       });
     }
@@ -133,34 +133,34 @@ app.post('/mcp', async (req, res) => {
     // Processar métodos
     let result;
     switch (method) {
-      case 'tools/list':
-        result = { tools };
-        break;
-      case 'prompts/list':
-        result = { prompts: [] };
-        break;
-      case 'resources/list':
-        result = { resources: [] };
-        break;
-      case 'tools/call':
-        result = await executeTool(params.name, params.arguments);
-        break;
-      case 'notifications/initialized':
-        result = {};
-        break;
-      default:
-        return res.status(404).json({
-          jsonrpc: '2.0',
-          error: { code: -32601, message: `Method not found: ${method}` },
-          id
-        });
+    case "tools/list":
+      result = { tools };
+      break;
+    case "prompts/list":
+      result = { prompts: [] };
+      break;
+    case "resources/list":
+      result = { resources: [] };
+      break;
+    case "tools/call":
+      result = await executeTool(params.name, params.arguments);
+      break;
+    case "notifications/initialized":
+      result = {};
+      break;
+    default:
+      return res.status(404).json({
+        jsonrpc: "2.0",
+        error: { code: -32601, message: `Method not found: ${method}` },
+        id
+      });
     }
     
-    res.json({ jsonrpc: '2.0', result, id });
+    res.json({ jsonrpc: "2.0", result, id });
     
   } catch (error) {
     res.status(500).json({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       error: { code: -32603, message: error.message },
       id
     });
@@ -168,13 +168,13 @@ app.post('/mcp', async (req, res) => {
 });
 
 // Rota informativa
-app.get('/', (_req, res) => {
+app.get("/", (_req, res) => {
   res.json({
-    name: 'mcp-well-database',
-    version: '1.0.0',
-    endpoint: '/mcp',
-    status: 'OK',
-    database: dbConnected ? 'Connected' : 'Disconnected'
+    name: "mcp-well-database",
+    version: "1.0.0",
+    endpoint: "/mcp",
+    status: "OK",
+    database: dbConnected ? "Connected" : "Disconnected"
   });
 });
 
