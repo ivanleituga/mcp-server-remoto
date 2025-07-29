@@ -101,25 +101,8 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// 1. Protected Resource Metadata (RFC 9728)
-app.get("/.well-known/oauth-protected-resource", (req, res) => {
-  res.json({
-    resource: SERVER_URL,
-    authorization_servers: [AUTH_SERVER_URL],
-    scopes_supported: [
-      "mcp:read",
-      "mcp:write",
-      "tools:execute"
-    ],
-    bearer_methods_supported: ["header"],
-    resource_documentation: "https://github.com/seu-usuario/mcp-well-database",
-    resource_policy_uri: "https://seu-site.com/privacy",
-    resource_contact: ["admin@seu-site.com"]
-  });
-});
-
-// 2. Rota MCP principal com autenticação
-app.post("/mcp", requireAuth, async (req, res) => {
+// Função para processar requisições MCP (compartilhada entre /mcp e /sse)
+async function processMcpRequest(req, res) {
   console.log(`📨 MCP Request - Method: ${req.body?.method}`);
   console.log("Headers:", {
     authorization: req.headers.authorization ? "Bearer ***" : "none",
@@ -155,8 +138,8 @@ app.post("/mcp", requireAuth, async (req, res) => {
       });
     }
     
-    // Validar sessão
-    if (!sessionId || !sessions[sessionId]) {
+    // Validar sessão (exceto para initialize)
+    if (method !== "initialize" && (!sessionId || !sessions[sessionId])) {
       console.log("❌ Sessão inválida ou não encontrada");
       return res.status(400).json({
         jsonrpc: "2.0",
@@ -207,9 +190,59 @@ app.post("/mcp", requireAuth, async (req, res) => {
       id
     });
   }
+}
+
+// 1. Protected Resource Metadata (RFC 9728)
+app.get("/.well-known/oauth-protected-resource", (req, res) => {
+  res.json({
+    resource: SERVER_URL,
+    authorization_servers: [AUTH_SERVER_URL],
+    scopes_supported: [
+      "mcp:read",
+      "mcp:write",
+      "tools:execute"
+    ],
+    bearer_methods_supported: ["header"],
+    resource_documentation: "https://github.com/seu-usuario/mcp-well-database",
+    resource_policy_uri: "https://seu-site.com/privacy",
+    resource_contact: ["admin@seu-site.com"]
+  });
 });
 
-// 3. Simulação de Authorization Server (APENAS PARA TESTE)
+// 2. Rota MCP principal com autenticação
+app.post("/mcp", requireAuth, processMcpRequest);
+
+// 3. Suporte para SSE (Server-Sent Events) - para MCP Inspector
+app.get("/sse", requireAuth, async (req, res) => {
+  console.log("🔌 Conexão SSE estabelecida");
+  
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  
+  // Enviar evento inicial
+  res.write("event: open\n");
+  res.write("data: {\"status\": \"connected\"}\n\n");
+  
+  // Manter conexão viva
+  const keepAlive = setInterval(() => {
+    res.write(":heartbeat\n\n");
+  }, 30000);
+  
+  // Limpar ao desconectar
+  req.on("close", () => {
+    console.log("🔌 Conexão SSE fechada");
+    clearInterval(keepAlive);
+  });
+});
+
+// Rota para processar comandos SSE
+app.post("/sse", requireAuth, processMcpRequest);
+
+// 4. Simulação de Authorization Server (APENAS PARA TESTE)
 const tempCodes = new Map();
 const tempTokens = new Map();
 
@@ -324,6 +357,7 @@ app.get("/", (_req, res) => {
     name: "mcp-well-database",
     version: "1.0.0",
     endpoint: "/mcp",
+    sse_endpoint: "/sse",
     status: "OK",
     database: dbConnected ? "Connected" : "Disconnected",
     protected_resource_metadata: "/.well-known/oauth-protected-resource",
@@ -348,5 +382,6 @@ app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
   console.log(`📋 Protected Resource Metadata: ${SERVER_URL}/.well-known/oauth-protected-resource`);
   console.log(`🔐 Authorization Server: ${AUTH_SERVER_URL}`);
+  console.log("📡 SSE Endpoint: /sse (para MCP Inspector)");
   console.log("⚠️  Usando authorization server embutido para testes");
 });
