@@ -403,6 +403,18 @@ app.get("/", (_req, res) => {
   });
 });
 
+// Rota POST / para Streamable HTTP
+app.post("/", requireAuth, async (req, res) => {
+  console.log("📨 Streamable HTTP na raiz - processando como MCP");
+  return processMcpRequest(req, res);
+});
+
+// Catch-all 404 - adicione ANTES do app.listen()
+app.use((req, res) => {
+  console.log(`❌ 404 - Rota não encontrada: ${req.method} ${req.url}`);
+  res.status(404).json({ error: "Not found", path: req.url });
+});
+
 // Limpar sessões antigas a cada 5 minutos
 setInterval(() => {
   const now = Date.now();
@@ -415,13 +427,6 @@ setInterval(() => {
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
-
-// Catch-all 404 - adicione ANTES do app.listen()
-app.use((req, res) => {
-  console.log(`❌ 404 - Rota não encontrada: ${req.method} ${req.url}`);
-  res.status(404).json({ error: "Not found", path: req.url });
-});
-
 app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
   console.log(`📋 Protected Resource Metadata: ${SERVER_URL}/.well-known/oauth-protected-resource`);
