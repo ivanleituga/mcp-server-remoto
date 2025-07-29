@@ -101,7 +101,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Função para processar requisições MCP (compartilhada entre /mcp e /sse)
+// Função para processar requisições MCP (compartilhada entre endpoints)
 async function processMcpRequest(req, res) {
   console.log(`📨 MCP Request - Method: ${req.body?.method}`);
   console.log("Headers:", {
@@ -209,12 +209,9 @@ app.get("/.well-known/oauth-protected-resource", (req, res) => {
   });
 });
 
-// 2. Rota MCP principal com autenticação
-app.post("/mcp", requireAuth, processMcpRequest);
-
-// 3. Suporte para SSE (Server-Sent Events) - para MCP Inspector
-app.get("/sse", requireAuth, async (req, res) => {
-  console.log("🔌 Conexão SSE estabelecida");
+// 2. Suporte para Streamable HTTP (MCP Inspector)
+app.get("/mcp/messages", requireAuth, async (req, res) => {
+  console.log("🔌 Conexão Streamable HTTP estabelecida");
   
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -223,24 +220,56 @@ app.get("/sse", requireAuth, async (req, res) => {
     "X-Accel-Buffering": "no"
   });
   
-  // Enviar evento inicial
-  res.write("event: open\n");
-  res.write("data: {\"status\": \"connected\"}\n\n");
+  // O Streamable HTTP espera um formato específico
+  res.write("\n");
   
   // Manter conexão viva
   const keepAlive = setInterval(() => {
-    res.write(":heartbeat\n\n");
+    res.write("\n");
   }, 30000);
   
-  // Limpar ao desconectar
   req.on("close", () => {
-    console.log("🔌 Conexão SSE fechada");
+    console.log("🔌 Conexão Streamable HTTP fechada");
     clearInterval(keepAlive);
   });
 });
 
-// Rota para processar comandos SSE
-app.post("/sse", requireAuth, processMcpRequest);
+// Endpoint para receber mensagens do Streamable HTTP
+app.post("/mcp/messages", requireAuth, async (req, res) => {
+  console.log("📨 Streamable HTTP Message:", JSON.stringify(req.body));
+  
+  // O Streamable HTTP espera a resposta em um formato específico
+  const { jsonrpc, method, params, id } = req.body;
+  
+  // Criar um objeto de requisição compatível
+  const mockReq = {
+    body: { method, params, id, jsonrpc },
+    headers: req.headers
+  };
+  
+  // Criar um objeto de resposta que captura o resultado
+  let responseData = null;
+  const mockRes = {
+    setHeader: () => {},
+    json: (data) => {
+      responseData = data;
+    },
+    status: () => mockRes
+  };
+  
+  // Processar usando a função existente
+  await processMcpRequest(mockReq, mockRes);
+  
+  // Enviar a resposta
+  if (responseData) {
+    res.json(responseData);
+  } else {
+    res.status(500).json({ error: "Processing failed" });
+  }
+});
+
+// 3. Rota MCP principal com autenticação (para Claude)
+app.post("/mcp", requireAuth, processMcpRequest);
 
 // 4. Simulação de Authorization Server (APENAS PARA TESTE)
 const tempCodes = new Map();
@@ -357,7 +386,7 @@ app.get("/", (_req, res) => {
     name: "mcp-well-database",
     version: "1.0.0",
     endpoint: "/mcp",
-    sse_endpoint: "/sse",
+    streamable_http_endpoint: "/mcp/messages",
     status: "OK",
     database: dbConnected ? "Connected" : "Disconnected",
     protected_resource_metadata: "/.well-known/oauth-protected-resource",
@@ -382,6 +411,6 @@ app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
   console.log(`📋 Protected Resource Metadata: ${SERVER_URL}/.well-known/oauth-protected-resource`);
   console.log(`🔐 Authorization Server: ${AUTH_SERVER_URL}`);
-  console.log("📡 SSE Endpoint: /sse (para MCP Inspector)");
+  console.log("📡 Streamable HTTP: /mcp/messages (para MCP Inspector)");
   console.log("⚠️  Usando authorization server embutido para testes");
 });
