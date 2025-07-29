@@ -16,6 +16,14 @@ const AUTH_SERVER_URL = "https://mcp-server-remoto.onrender.com";
 // Middlewares
 app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
 app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`🔍 ${req.method} ${req.url} - Headers:`, {
+    authorization: req.headers.authorization ? "Bearer ***" : "none",
+    accept: req.headers.accept
+  });
+  next();
+});
+
 app.use(express.urlencoded({ extended: true }));
 
 // Logging MCP
@@ -407,6 +415,13 @@ setInterval(() => {
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
+
+// Catch-all 404 - adicione ANTES do app.listen()
+app.use((req, res) => {
+  console.log(`❌ 404 - Rota não encontrada: ${req.method} ${req.url}`);
+  res.status(404).json({ error: "Not found", path: req.url });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
   console.log(`📋 Protected Resource Metadata: ${SERVER_URL}/.well-known/oauth-protected-resource`);
