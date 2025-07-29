@@ -1,7 +1,5 @@
 const { tools, executeTool } = require("./tools");
-
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const { v4: uuidv4 } = require("uuid");
@@ -9,9 +7,13 @@ const { Pool } = require("pg");
 
 const app = express();
 
+// Configuração do servidor
+const SERVER_URL = "https://mcp-server-remoto.onrender.com";
+
 // Middlewares
 app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Logging MCP
 app.use((req, _res, next) => {
@@ -63,8 +65,97 @@ async function query(sql) {
 // Sessões MCP
 const sessions = {};
 
-// Rota MCP principal
+// OAuth - Armazenamento temporário
+const tempCodes = new Map();
+const tempTokens = new Map();
+
+// 1. Protected Resource Metadata (necessário para OAuth)
+app.get("/.well-known/oauth-protected-resource", (req, res) => {
+  res.json({
+    resource: SERVER_URL,
+    authorization_servers: [SERVER_URL],
+    scopes_supported: ["mcp:read", "mcp:write", "tools:execute"],
+    bearer_methods_supported: ["header"]
+  });
+});
+
+// 2. OAuth Authorization Server Metadata
+app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  res.json({
+    issuer: SERVER_URL,
+    authorization_endpoint: `${SERVER_URL}/authorize`,
+    token_endpoint: `${SERVER_URL}/token`,
+    registration_endpoint: `${SERVER_URL}/register`,
+    scopes_supported: ["mcp:read", "mcp:write", "tools:execute"],
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code"],
+    code_challenge_methods_supported: ["S256"]
+  });
+});
+
+// 3. OAuth Endpoints (simplificados)
+app.get("/authorize", (req, res) => {
+  const { client_id, redirect_uri, state } = req.query;
+  const code = uuidv4();
+  tempCodes.set(code, { client_id, redirect_uri, created: Date.now() });
+  res.redirect(`${redirect_uri}?code=${code}&state=${state}`);
+});
+
+app.post("/token", (req, res) => {
+  const { code, client_id } = req.body;
+  const codeData = tempCodes.get(code);
+  
+  if (!codeData || codeData.client_id !== client_id) {
+    return res.status(400).json({ error: "invalid_grant" });
+  }
+  
+  const token = `token_${uuidv4()}`;
+  tempTokens.set(token, { client_id, created: Date.now() });
+  tempCodes.delete(code);
+  
+  res.json({
+    access_token: token,
+    token_type: "Bearer",
+    expires_in: 3600
+  });
+});
+
+app.post("/register", (req, res) => {
+  const { client_name } = req.body;
+  console.log("Client registration:", client_name);
+  
+  res.status(201).json({
+    client_id: `client_${uuidv4()}`,
+    client_secret: uuidv4(),
+    client_name
+  });
+});
+
+// Middleware de autenticação opcional
+function checkAuth(req) {
+  const authHeader = req.headers.authorization;
+  
+  // Se tem Bearer token, validar
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    // Por enquanto, aceitar qualquer token
+    return true;
+  }
+  
+  // Se não tem token, permitir também (para manter compatibilidade)
+  return true;
+}
+
+// Rota MCP principal (mantida do código original)
 app.post("/mcp", async (req, res) => {
+  // Verificar autenticação se presente
+  if (!checkAuth(req)) {
+    return res.status(401).json({
+      error: "unauthorized",
+      error_description: "Invalid token"
+    });
+  }
+  
   const sessionId = req.headers["mcp-session-id"];
   const { method, params, id } = req.body;
   
@@ -132,6 +223,13 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
+// Rota alternativa para Streamable HTTP (Inspector/Claude Web)
+app.post("/", async (req, res) => {
+  // Reutilizar a mesma lógica do /mcp
+  req.url = "/mcp";
+  return app._router.handle(req, res);
+});
+
 // Rota informativa
 app.get("/", (_req, res) => {
   res.json({
@@ -147,4 +245,6 @@ app.get("/", (_req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 MCP Well Database Server - Port ${PORT}`);
+  console.log("📋 OAuth Metadata disponível");
+  console.log("🔐 Funciona com e sem autenticação");
 });
