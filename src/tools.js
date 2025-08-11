@@ -1,9 +1,9 @@
 const { schema } = require("../utils/utils");
 
-// Definição das ferramentas
+// Definição das ferramentas com NOMES CORRIGIDOS
 const tools = [
   {
-    name: "fetch_well_database_schema",
+    name: "fetch_well_database_schema", // ✅ Nome OK - já está correto
     description: `Returns the full and authoritative schema of the well/basin database.
     
     Usage:
@@ -19,7 +19,7 @@ const tools = [
     }
   },
   {
-    name: "query_well_database",
+    name: "query_well_database", // ✅ Nome OK - já está correto
     description: `You are a PostgreSQL assistant specialized in querying geological well and basin data.
 
     You will receive natural language questions and must respond by generating only valid SELECT statements.
@@ -44,7 +44,7 @@ const tools = [
     }
   },
   {
-    name: "generate_lithological_profile",
+    name: "generate_lithological_profile", // ✅ Nome OK - já está correto
     description: `Generates a lithological profile visualization for a specific well. 
     This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
     DO NOT query the database first - this tool handles everything internally.
@@ -67,36 +67,61 @@ const tools = [
 ];
 
 async function executeTool(toolName, args = {}, queryFn) {
-  switch (toolName) {
-  case "fetch_well_database_schema":
-    return { content: [{ type: "text", text: schema }] };
+  try {
+    switch (toolName) {
+    case "fetch_well_database_schema":
+      return { 
+        content: [{ type: "text", text: schema }],
+        isError: false // IMPORTANTE: adicionar isError flag
+      };
       
-  case "query_well_database":
-    try {
-      const data = await queryFn(args.sql);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
-    }
+    case "query_well_database":
+      try {
+        const data = await queryFn(args.sql);
+        return { 
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          isError: false
+        };
+      } catch (err) {
+        return { 
+          content: [{ type: "text", text: `Erro: ${err.message}` }],
+          isError: true // Marcar como erro
+        };
+      }
       
-  case "generate_lithological_profile":
-    try {
-      const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
-      const response = await fetch(url, {
-        headers: { "Accept": "text/html" },
-        signal: AbortSignal.timeout(30000)
-      });
+    case "generate_lithological_profile":
+      try {
+        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
+        const response = await fetch(url, {
+          headers: { "Accept": "text/html" },
+          signal: AbortSignal.timeout(30000)
+        });
           
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
           
-      const html = await response.text();
-      return { content: [{ type: "text", text: html }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }] };
-    }
+        const html = await response.text();
+        return { 
+          content: [{ type: "text", text: html }],
+          isError: false
+        };
+      } catch (err) {
+        return { 
+          content: [{ type: "text", text: `Error: ${err.message}` }],
+          isError: true
+        };
+      }
       
-  default:
-    throw new Error(`Tool not found: ${toolName}`);
+    default:
+      throw new Error(`Tool not found: ${toolName}`);
+    }
+  } catch (error) {
+    // Captura geral de erros
+    return {
+      content: [{ type: "text", text: `Error: ${error.message}` }],
+      isError: true
+    };
   }
 }
 
