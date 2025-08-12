@@ -1,4 +1,5 @@
 const { tools, executeTool } = require("./tools");
+const { setupOAuthEndpoints } = require("./oauth");
 require("dotenv").config();
 
 const express = require("express");
@@ -6,7 +7,7 @@ const { Pool } = require("pg");
 const cors = require("cors");
 const crypto = require("crypto");
 
-// SDK MCP
+// IMPORTANTE: Importar do SDK MCP
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 
@@ -19,15 +20,14 @@ const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
 // Middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// CORS simples e direto
 app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Mcp-Session-Id", "Accept"],
-  exposedHeaders: ["Mcp-Session-Id"],
+  origin: true,
   credentials: true
 }));
 
-// PostgreSQL
+// Pool PostgreSQL
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -39,7 +39,7 @@ const pool = new Pool({
 
 let dbConnected = false;
 
-// Testar conexão
+// Testar conexão com o banco
 (async () => {
   try {
     const client = await pool.connect();
@@ -67,7 +67,13 @@ async function query(sql) {
 }
 
 // ===============================================
-// MCP SERVER
+// CONFIGURAR OAUTH
+// ===============================================
+
+const { validateToken } = setupOAuthEndpoints(app);
+
+// ===============================================
+// CRIAR MCP SERVER
 // ===============================================
 
 const mcpServer = new McpServer({
@@ -75,7 +81,7 @@ const mcpServer = new McpServer({
   version: "1.0.0",
 });
 
-// Registrar ferramentas
+// Registrar as ferramentas
 console.log(`📦 Registrando ${tools.length} ferramentas...`);
 tools.forEach(tool => {
   console.log(`  - ${tool.name}`);
@@ -84,8 +90,17 @@ tools.forEach(tool => {
     tool.name,
     tool.inputSchema.properties || {},
     async (params) => {
-      console.log(`🔧 Executando: ${tool.name}`);
-      return await executeTool(tool.name, params, query);
+      console.log(`\n🔧 Executando: ${tool.name}`);
+      console.log("   Params:", JSON.stringify(params, null, 2));
+      
+      try {
+        const result = await executeTool(tool.name, params, query);
+        console.log("   ✅ Sucesso");
+        return result;
+      } catch (error) {
+        console.error("   ❌ Erro:", error.message);
+        throw error;
+      }
     }
   );
 });
@@ -97,48 +112,44 @@ tools.forEach(tool => {
 const transports = {};
 
 // ===============================================
-// ENDPOINT ÚNICO: POST /mcp
+// ENDPOINT MCP ÚNICO E SIMPLES
 // ===============================================
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", validateToken, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
+  const isInit = req.body?.method === "initialize";
+  
+  console.log(`\n📨 ${req.body?.method || "unknown"} - Session: ${sessionId || "new"}`);
   
   try {
-    // Check if this is an initialization request
-    const isInit = req.body?.method === "initialize";
-    
-    // Create new transport if needed
+    // Criar novo transport se necessário
     if (!sessionId || !transports[sessionId] || isInit) {
-      console.log(`🆕 Novo transport (${isInit ? "initialize" : "nova sessão"})`);
-      
       const newSessionId = sessionId || crypto.randomUUID();
+      
+      console.log(`🆕 Nova sessão: ${newSessionId}`);
+      
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
-          console.log(`✅ Sessão criada: ${sid}`);
+          console.log(`✅ Sessão inicializada: ${sid}`);
           transports[sid] = transport;
         }
       });
       
-      // Connect transport to server
       await mcpServer.connect(transport);
-      
-      // Set session ID header
       res.setHeader("Mcp-Session-Id", newSessionId);
-      
-      // Handle request
       await transport.handleRequest(req, res, req.body);
       return;
     }
     
-    // Use existing transport
+    // Usar transport existente
     if (transports[sessionId]) {
-      console.log(`♻️ Reusando sessão ${sessionId}`);
+      console.log(`♻️ Reusando sessão: ${sessionId}`);
       await transports[sessionId].handleRequest(req, res, req.body);
       return;
     }
     
-    // Error: no valid transport
+    // Erro: sessão inválida
     console.error(`❌ Sessão inválida: ${sessionId}`);
     res.status(400).json({
       jsonrpc: "2.0",
@@ -150,7 +161,7 @@ app.post("/mcp", async (req, res) => {
     });
     
   } catch (error) {
-    console.error("❌ Erro:", error);
+    console.error("❌ Erro:", error.message);
     res.status(500).json({
       jsonrpc: "2.0",
       error: {
@@ -163,27 +174,8 @@ app.post("/mcp", async (req, res) => {
 });
 
 // ===============================================
-// PÁGINA INICIAL
+// ENDPOINTS AUXILIARES
 // ===============================================
-
-app.get("/", (req, res) => {
-  res.json({
-    name: "mcp-well-database",
-    version: "1.0.0",
-    status: "OK",
-    database: dbConnected ? "Connected" : "Disconnected",
-    transport: "Streamable HTTP",
-    endpoint: `${SERVER_URL}/mcp`,
-    tools: tools.map(t => ({ 
-      name: t.name, 
-      description: t.description.substring(0, 100) + "..." 
-    })),
-    instructions: {
-      claude: `Add as Custom Connector: ${SERVER_URL}/mcp`,
-      inspector: `npx @modelcontextprotocol/inspector -y --url ${SERVER_URL}/mcp`
-    }
-  });
-});
 
 // Health check
 app.get("/health", (req, res) => {
@@ -194,49 +186,250 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Página inicial
+app.get("/", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>MCP Well Database</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { 
+            font-family: -apple-system, system-ui, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+          }
+          .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          }
+          h1 { 
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: #1a202c;
+          }
+          .status {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            border-radius: 100px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-left: 1rem;
+          }
+          .status.online {
+            background: #10b981;
+            color: white;
+          }
+          .status.offline {
+            background: #ef4444;
+            color: white;
+          }
+          .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+          }
+          .card {
+            background: #f9fafb;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+          }
+          .card h3 {
+            font-size: 0.875rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+          }
+          .card p {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1f2937;
+          }
+          .tools {
+            margin: 2rem 0;
+          }
+          .tool {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 4px;
+          }
+          .tool strong {
+            color: #92400e;
+          }
+          .instructions {
+            background: #dbeafe;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+          }
+          code {
+            background: #1f2937;
+            color: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+          }
+          .button {
+            display: inline-block;
+            background: #3b82f6;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 0.5rem;
+            transition: all 0.2s;
+          }
+          .button:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+          }
+          .footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid #e5e7eb;
+            color: #6b7280;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>
+            🚀 MCP Well Database
+            <span class="status online">ONLINE</span>
+          </h1>
+          
+          <div class="grid">
+            <div class="card">
+              <h3>Database</h3>
+              <p>${dbConnected ? "✅ Connected" : "❌ Offline"}</p>
+            </div>
+            <div class="card">
+              <h3>Active Sessions</h3>
+              <p>${Object.keys(transports).length}</p>
+            </div>
+            <div class="card">
+              <h3>Tools Available</h3>
+              <p>${tools.length}</p>
+            </div>
+            <div class="card">
+              <h3>OAuth Status</h3>
+              <p>✅ Enabled</p>
+            </div>
+          </div>
+
+          <div class="tools">
+            <h2>🔧 Available Tools</h2>
+            ${tools.map(tool => `
+              <div class="tool">
+                <strong>${tool.name}</strong>
+                <br>
+                <small>${tool.description.substring(0, 100)}...</small>
+              </div>
+            `).join("")}
+          </div>
+
+          <div class="instructions">
+            <h2>📱 Connect with Claude</h2>
+            <ol style="margin: 1rem 0 1rem 2rem;">
+              <li>Open Claude Desktop or Web</li>
+              <li>Go to Settings → Connectors</li>
+              <li>Click "Add Custom Connector"</li>
+              <li>Enter: <code>${SERVER_URL}/mcp</code></li>
+              <li>Complete OAuth (auto-approves)</li>
+            </ol>
+          </div>
+
+          <div style="text-align: center; margin: 2rem 0;">
+            <a href="/oauth/status" class="button">OAuth Status</a>
+            <a href="/docs" class="button">Documentation</a>
+            <a href="/health" class="button">Health Check</a>
+          </div>
+
+          <div class="footer">
+            <p>MCP Well Database Server v1.0.0</p>
+            <p style="margin-top: 0.5rem;">
+              <small>Streamable HTTP Protocol 2025-03-26</small>
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
 // ===============================================
-// START SERVER
+// LIMPEZA PERIÓDICA
+// ===============================================
+
+setInterval(() => {
+  // Limpar sessões antigas (mais de 1 hora)
+  const now = Date.now();
+  const timeout = 3600000; // 1 hora
+  
+  for (const [sessionId, transport] of Object.entries(transports)) {
+    // Aqui você poderia adicionar timestamp nas sessões
+    // Por ora, apenas logamos
+  }
+  
+  console.log(`🧹 Sessões ativas: ${Object.keys(transports).length}`);
+}, 300000); // A cada 5 minutos
+
+// ===============================================
+// INICIALIZAÇÃO
 // ===============================================
 
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════╗
-║         MCP WELL DATABASE SERVER              ║
+║           MCP WELL DATABASE SERVER             ║
 ╠════════════════════════════════════════════════╣
-║                                                ║
-║  🚀 Status: ONLINE                            ║
-║  📡 Port: ${PORT}                             ║
-║  🔗 URL: ${SERVER_URL}                        ║
-║                                                ║
-║  📊 Database: ${dbConnected ? "✅ Connected" : "❌ Disconnected"}                     ║
-║  🔧 Tools: ${tools.length} registered                        ║
-║                                                ║
+║                                                 ║
+║  🚀 Status: ONLINE                             ║
+║  📡 Port: ${PORT}                              ║
+║  🔗 URL: ${SERVER_URL}                         ║
+║                                                 ║
+║  📊 Database: ${dbConnected ? "✅ Connected" : "❌ Disconnected"}    ║
+║  🔧 Tools: ${tools.length} registered          ║
+║  🔐 OAuth: Enabled (auto-approve)              ║
+║                                                 ║
 ╠════════════════════════════════════════════════╣
-║                                                ║
-║  ENDPOINT ÚNICO:                              ║
-║  POST ${SERVER_URL}/mcp                       ║
-║                                                ║
-║  TESTE COM INSPECTOR:                         ║
-║  npx @modelcontextprotocol/inspector -y \\     ║
-║    --url ${SERVER_URL}/mcp                    ║
-║                                                ║
+║                                                 ║
+║  CONNECT WITH CLAUDE:                          ║
+║  ${SERVER_URL}/mcp                             ║
+║                                                 ║
 ╚════════════════════════════════════════════════╝
 `);
 });
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
-  console.log("\n🛑 Desligando servidor...");
+  console.log("\n🛑 Shutting down...");
   
   for (const sessionId in transports) {
     try {
       await transports[sessionId].close();
-      delete transports[sessionId];
     } catch (error) {
-      // Ignore errors
+      // Ignore errors during shutdown
     }
   }
   
-  console.log("✅ Servidor desligado");
+  console.log("✅ Server stopped");
   process.exit(0);
 });

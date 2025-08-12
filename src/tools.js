@@ -1,9 +1,8 @@
 const { schema } = require("../utils/utils");
 
-// Definição das ferramentas com NOMES CORRIGIDOS
 const tools = [
   {
-    name: "fetch_well_database_schema", // ✅ Nome OK - já está correto
+    name: "fetch_well_database_schema",
     description: `Returns the full and authoritative schema of the well/basin database.
     
     Usage:
@@ -19,7 +18,7 @@ const tools = [
     }
   },
   {
-    name: "query_well_database", // ✅ Nome OK - já está correto
+    name: "query_well_database",
     description: `You are a PostgreSQL assistant specialized in querying geological well and basin data.
 
     You will receive natural language questions and must respond by generating only valid SELECT statements.
@@ -44,7 +43,7 @@ const tools = [
     }
   },
   {
-    name: "generate_lithological_profile", // ✅ Nome OK - já está correto
+    name: "generate_lithological_profile",
     description: `Generates a lithological profile visualization for a specific well. 
     This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
     DO NOT query the database first - this tool handles everything internally.
@@ -72,7 +71,7 @@ async function executeTool(toolName, args = {}, queryFn) {
     case "fetch_well_database_schema":
       return { 
         content: [{ type: "text", text: schema }],
-        isError: false // IMPORTANTE: adicionar isError flag
+        isError: false
       };
       
     case "query_well_database":
@@ -85,7 +84,7 @@ async function executeTool(toolName, args = {}, queryFn) {
       } catch (err) {
         return { 
           content: [{ type: "text", text: `Erro: ${err.message}` }],
-          isError: true // Marcar como erro
+          isError: true
         };
       }
       
@@ -117,7 +116,6 @@ async function executeTool(toolName, args = {}, queryFn) {
       throw new Error(`Tool not found: ${toolName}`);
     }
   } catch (error) {
-    // Captura geral de erros
     return {
       content: [{ type: "text", text: `Error: ${error.message}` }],
       isError: true
