@@ -10,7 +10,6 @@ const crypto = require("crypto");
 // IMPORTANTE: Importar do SDK MCP
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
-const { SSEServerTransport } = require("@modelcontextprotocol/sdk/server/sse.js");
 const { isInitializeRequest } = require("@modelcontextprotocol/sdk/types.js");
 
 const app = express();
@@ -28,7 +27,7 @@ app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Mcp-Session-Id", "Accept", "Last-Event-ID", "Authorization"],
-  exposedHeaders: ["Mcp-Session-Id"],
+  exposedHeaders: ["Mcp-Session-Id", "WWW-Authenticate"],
   credentials: true
 }));
 
@@ -72,6 +71,162 @@ async function query(sql) {
 }
 
 // ===============================================
+// OAUTH SIMPLIFICADO (Mock para desenvolvimento)
+// ===============================================
+
+// Store de tokens (em produção, use um banco de dados)
+const tokens = new Map();
+const authCodes = new Map();
+
+// OAuth Discovery Endpoint
+app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  res.json({
+    issuer: SERVER_URL,
+    authorization_endpoint: `${SERVER_URL}/oauth/authorize`,
+    token_endpoint: `${SERVER_URL}/oauth/token`,
+    registration_endpoint: `${SERVER_URL}/oauth/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"]
+  });
+});
+
+// OAuth Client Registration
+app.post("/oauth/register", (req, res) => {
+  const clientId = `client_${uuidv4()}`;
+  console.log("📝 Novo cliente OAuth registrado:", clientId);
+  
+  res.json({
+    client_id: clientId,
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    grant_types: ["authorization_code", "refresh_token"]
+  });
+});
+
+// OAuth Authorization Endpoint
+app.get("/oauth/authorize", (req, res) => {
+  const { client_id, redirect_uri, state, code_challenge } = req.query;
+  
+  // Mock: Auto-aprovação (em produção, mostraria tela de consentimento)
+  const authCode = `code_${uuidv4()}`;
+  authCodes.set(authCode, {
+    clientId: client_id,
+    codeChallenge: code_challenge,
+    createdAt: Date.now()
+  });
+  
+  console.log("🔐 Código de autorização gerado:", authCode);
+  
+  // Redirecionar com o código
+  const redirectUrl = new URL(redirect_uri);
+  redirectUrl.searchParams.set("code", authCode);
+  if (state) redirectUrl.searchParams.set("state", state);
+  
+  res.redirect(redirectUrl.toString());
+});
+
+// OAuth Token Endpoint
+app.post("/oauth/token", (req, res) => {
+  const { grant_type, code, code_verifier, refresh_token } = req.body;
+  
+  console.log("🎫 Token request:", { grant_type, hasCode: !!code, hasRefresh: !!refresh_token });
+  
+  if (grant_type === "authorization_code") {
+    // Mock: Validação simplificada
+    if (!code || !authCodes.has(code)) {
+      return res.status(400).json({ error: "invalid_grant" });
+    }
+    
+    const authData = authCodes.get(code);
+    authCodes.delete(code); // Código só pode ser usado uma vez
+    
+    // Gerar tokens
+    const accessToken = `access_${uuidv4()}`;
+    const refreshToken = `refresh_${uuidv4()}`;
+    
+    tokens.set(accessToken, {
+      clientId: authData.clientId,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000 // 1 hora
+    });
+    
+    tokens.set(refreshToken, {
+      clientId: authData.clientId,
+      createdAt: Date.now(),
+      type: "refresh"
+    });
+    
+    console.log("✅ Tokens gerados:", { accessToken, refreshToken });
+    
+    res.json({
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: refreshToken
+    });
+  } else if (grant_type === "refresh_token") {
+    // Mock: Sempre renova o token
+    const newAccessToken = `access_${uuidv4()}`;
+    
+    tokens.set(newAccessToken, {
+      clientId: "refreshed_client",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000
+    });
+    
+    res.json({
+      access_token: newAccessToken,
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: refresh_token // Mantém o mesmo refresh token
+    });
+  } else {
+    res.status(400).json({ error: "unsupported_grant_type" });
+  }
+});
+
+// Middleware de validação OAuth (flexível para desenvolvimento)
+function validateOAuth(req, res, next) {
+  // IMPORTANTE: Permitir initialize sem autenticação
+  if (req.body?.method === "initialize") {
+    console.log("🆓 Initialize request - bypass OAuth");
+    return next();
+  }
+  
+  const authHeader = req.headers.authorization;
+  
+  // Em desenvolvimento, permitir sem token
+  if (!authHeader) {
+    console.log("⚠️ No auth header - allowing for development");
+    return next();
+  }
+  
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    
+    if (tokens.has(token)) {
+      const tokenData = tokens.get(token);
+      
+      // Verificar expiração
+      if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
+        console.log("❌ Token expirado");
+        return res.status(401).json({ error: "token_expired" });
+      }
+      
+      console.log("✅ Token válido");
+      req.oauth = tokenData;
+      return next();
+    }
+    
+    console.log("❌ Token inválido");
+    return res.status(401).json({ error: "invalid_token" });
+  }
+  
+  next();
+}
+
+// ===============================================
 // CRIAR MCP SERVER
 // ===============================================
 
@@ -83,24 +238,21 @@ const mcpServer = new McpServer({
 // Registrar as ferramentas no MCP Server
 console.log(`📦 Registrando ${tools.length} ferramentas...`);
 tools.forEach(tool => {
-  console.log(`  - ${tool.name}: ${tool.description}`);
-  
-  // Converter inputSchema para o formato do SDK
-  const schemaProperties = {};
-  if (tool.inputSchema && tool.inputSchema.properties) {
-    Object.entries(tool.inputSchema.properties).forEach(([key, value]) => {
-      // Aqui você precisa converter seu schema para Zod se necessário
-      // Por enquanto, vamos assumir que é compatível
-      schemaProperties[key] = value;
-    });
-  }
+  console.log(`  - ${tool.name}: ${tool.description.substring(0, 50)}...`);
   
   mcpServer.tool(
     tool.name,
-    schemaProperties,
+    tool.inputSchema.properties || {}, // Usar properties do inputSchema
     async (params) => {
       console.log(`🔧 Executando ferramenta: ${tool.name}`);
-      return await executeTool(tool.name, params, query);
+      const result = await executeTool(tool.name, params, query);
+      
+      // Garantir que retornamos no formato correto
+      if (result.isError) {
+        throw new Error(result.content[0].text);
+      }
+      
+      return result;
     }
   );
 });
@@ -111,9 +263,6 @@ tools.forEach(tool => {
 
 // Store transports by session ID
 const transports = {};
-
-// SSE transport (para compatibilidade)
-let sseTransport;
 
 // ===============================================
 // ENDPOINTS
@@ -128,63 +277,24 @@ app.get("/", (req, res) => {
     database: dbConnected ? "Connected" : "Disconnected",
     endpoints: {
       "/": "Server information (this response)",
-      "/sse": "Server-Sent Events endpoint for MCP connection",
-      "/messages": "POST endpoint for MCP messages (SSE)",
       "/mcp": "Streamable HTTP endpoint for MCP connection"
     },
-    customConnector: {
-      preferred: `${SERVER_URL}/mcp`,
-      alternative: `${SERVER_URL}/sse`,
-      instructions: "Use /mcp for modern clients, /sse for legacy"
+    oauth: {
+      discovery: `${SERVER_URL}/.well-known/oauth-authorization-server`,
+      authorize: `${SERVER_URL}/oauth/authorize`,
+      token: `${SERVER_URL}/oauth/token`,
+      register: `${SERVER_URL}/oauth/register`
     },
-    tools: tools.map(t => ({ name: t.name, description: t.description }))
+    customConnector: {
+      url: `${SERVER_URL}/mcp`,
+      instructions: "Add this URL as a Custom Connector in Claude"
+    },
+    tools: tools.map(t => ({ name: t.name, description: t.description.substring(0, 100) + "..." }))
   });
 });
 
 // ===============================================
-// SSE ENDPOINTS (Legacy support)
-// ===============================================
-
-app.get("/sse", async (req, res) => {
-  console.log("🔌 Nova conexão SSE");
-  try {
-    sseTransport = new SSEServerTransport("/messages", res);
-    await mcpServer.connect(sseTransport);
-    console.log("✅ SSE transport conectado");
-  } catch (error) {
-    console.error("❌ Erro ao conectar SSE:", error);
-  }
-});
-
-app.post("/messages", async (req, res) => {
-  console.log("📨 Mensagem SSE recebida");
-  try {
-    if (!sseTransport) {
-      return res.status(400).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32000,
-          message: "SSE transport not initialized"
-        },
-        id: req.body?.id
-      });
-    }
-    await sseTransport.handlePostMessage(req, res);
-  } catch (error) {
-    console.error("❌ Erro ao processar mensagem SSE:", error);
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32603,
-        message: error.message
-      },
-      id: req.body?.id
-    });
-  }
-});
-
-// ===============================================
-// STREAMABLE HTTP ENDPOINT (Moderno)
+// STREAMABLE HTTP ENDPOINT com OAuth Opcional
 // ===============================================
 
 const streamableHttpHandler = async (server, req, res) => {
@@ -193,7 +303,7 @@ const streamableHttpHandler = async (server, req, res) => {
     
     try {
       // Check if this is an initialization request
-      const isInit = isInitializeRequest(req.body);
+      const isInit = req.body?.method === "initialize" || isInitializeRequest(req.body);
       
       // Create a new transport for this session if needed
       if (!sessionId || !transports[sessionId] || isInit) {
@@ -278,10 +388,40 @@ const streamableHttpHandler = async (server, req, res) => {
   }
 };
 
-// Endpoint principal /mcp
-app.all("/mcp", async (req, res) => {
+// Endpoint principal /mcp COM OAuth opcional
+app.all("/mcp", validateOAuth, async (req, res) => {
+  console.log(`📨 ${req.method} /mcp - OAuth: ${req.oauth ? "✅" : "❌"}`);
   await streamableHttpHandler(mcpServer, req, res);
 });
+
+// ===============================================
+// LIMPEZA PERIÓDICA
+// ===============================================
+
+// Limpar tokens expirados
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [token, data] of tokens.entries()) {
+    if (data.expiresAt && now > data.expiresAt) {
+      tokens.delete(token);
+      cleaned++;
+    }
+  }
+  
+  // Limpar códigos de autorização antigos (mais de 10 minutos)
+  for (const [code, data] of authCodes.entries()) {
+    if (now - data.createdAt > 600000) {
+      authCodes.delete(code);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 Limpeza: ${cleaned} tokens/códigos expirados removidos`);
+  }
+}, 60000); // A cada minuto
 
 // ===============================================
 // INICIALIZAÇÃO
@@ -289,20 +429,22 @@ app.all("/mcp", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`
-🚀 MCP Well Database Server
+🚀 MCP Well Database Server (SDK + OAuth)
 📡 Porta: ${PORT}
 🔗 URL: ${SERVER_URL}
 ✅ Ferramentas: ${tools.length} registradas
 
 🔌 Endpoints disponíveis:
-- Streamable HTTP: ${SERVER_URL}/mcp (recomendado)
-- SSE Legacy: ${SERVER_URL}/sse + /messages
+- Streamable HTTP: ${SERVER_URL}/mcp
+- OAuth Discovery: ${SERVER_URL}/.well-known/oauth-authorization-server
 
 🧪 Para Custom Connector no Claude:
 - Use: ${SERVER_URL}/mcp
+- OAuth será solicitado automaticamente
 
 📊 Status:
 - Banco de dados: ${dbConnected ? "✅ Conectado" : "❌ Desconectado"}
+- OAuth: Mock mode (auto-approval)
   `);
 });
 
