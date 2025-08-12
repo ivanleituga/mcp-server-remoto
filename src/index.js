@@ -1,10 +1,17 @@
 const { tools, executeTool } = require("./tools");
-const { setupOAuthEndpoints } = require("./oauth");
 require("dotenv").config();
 
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 const { Pool } = require("pg");
+const cors = require("cors");
+const crypto = require("crypto");
+
+// IMPORTANTE: Importar do SDK MCP
+const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const { SSEServerTransport } = require("@modelcontextprotocol/sdk/server/sse.js");
+const { isInitializeRequest } = require("@modelcontextprotocol/sdk/types.js");
 
 const app = express();
 
@@ -16,18 +23,14 @@ const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS configurado para MCP e OAuth
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, Accept");
-  res.header("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate");
-  
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-  next();
-});
+// CORS configurado
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Mcp-Session-Id", "Accept", "Last-Event-ID", "Authorization"],
+  exposedHeaders: ["Mcp-Session-Id"],
+  credentials: true
+}));
 
 // Pool PostgreSQL
 const pool = new Pool({
@@ -68,319 +71,253 @@ async function query(sql) {
   }
 }
 
-// Configurar OAuth
-const { validateToken } = setupOAuthEndpoints(app);
-
-// Sessões MCP em memória
-const sessions = {};
-
 // ===============================================
-// STREAMABLE HTTP ENDPOINT (2025-03-26 spec)
+// CRIAR MCP SERVER
 // ===============================================
 
-// POST /mcp - Endpoint principal do Streamable HTTP
-app.post("/mcp", validateToken, async (req, res) => {
-  const { method, params, id } = req.body;
-  const sessionId = req.headers["mcp-session-id"];
-  const acceptHeader = req.headers.accept || "";
-  
-  console.log(`📨 ${method} - Session: ${sessionId || "new"} - Accept: ${acceptHeader}`);
-  
-  try {
-    // Handle initialize
-    if (method === "initialize") {
-      const newSessionId = uuidv4();
-      sessions[newSessionId] = { 
-        created: new Date(),
-        protocolVersion: params?.protocolVersion || "2025-03-26",
-        clientInfo: params?.clientInfo || {}
-      };
-      
-      // IMPORTANTE: Definir o header Mcp-Session-Id na resposta
-      res.setHeader("Mcp-Session-Id", newSessionId);
-      
-      // Resposta com capabilities e tools info
-      return res.json({
-        jsonrpc: "2.0",
-        result: {
-          protocolVersion: "2025-03-26",
-          capabilities: {
-            tools: {
-              listChanged: false // Indica que a lista de tools é estática
-            },
-            prompts: {},
-            resources: {}
-          },
-          serverInfo: {
-            name: "mcp-well-database",
-            version: "1.0.0",
-            protocolVersions: ["2025-03-26", "2024-11-05"]
-          }
-        },
-        id
-      });
-    }
-    
-    // Validar sessão para outros métodos (mas permitir sem sessão para dev)
-    if (!sessionId && !sessions[sessionId]) {
-      console.log("⚠️ No session, creating one for development");
-      const newSessionId = uuidv4();
-      sessions[newSessionId] = { 
-        created: new Date(),
-        protocolVersion: "2025-03-26"
-      };
-      res.setHeader("Mcp-Session-Id", newSessionId);
-    }
-    
-    // Processar métodos
-    let result;
-    switch (method) {
-    case "tools/list":
-      // CRÍTICO: Retornar tools no formato exato esperado
-      result = { 
-        tools: tools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema
-        }))
-      };
-      console.log("🔧 Returning tools:", JSON.stringify(result, null, 2));
-      break;
-        
-    case "prompts/list":
-      result = { prompts: [] };
-      break;
-        
-    case "resources/list":
-      result = { resources: [] };
-      break;
-        
-    case "tools/call":
-      // Executar ferramenta com novo formato
-      result = await executeTool(params.name, params.arguments, query);
-      break;
-        
-    case "notifications/initialized":
-      // Cliente notificando que inicializou
-      console.log("✅ Client initialized notification received");
-      result = {};
-      break;
-        
-    case "notifications/cancelled":
-      // Cliente cancelando uma requisição
-      console.log(`🚫 Requisição ${params.requestId} cancelada: ${params.reason}`);
-      result = {};
-      break;
-        
-    default:
-      return res.status(404).json({
-        jsonrpc: "2.0",
-        error: { 
-          code: -32601, 
-          message: `Method not found: ${method}`
-        },
-        id
-      });
-    }
-    
-    // Resposta JSON padrão
-    res.json({
-      jsonrpc: "2.0",
-      result,
-      id
-    });
-    
-  } catch (error) {
-    console.error(`❌ Erro processando ${method}:`, error);
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: { 
-        code: -32603, 
-        message: `Internal error: ${error.message}`
-      },
-      id
-    });
-  }
+const mcpServer = new McpServer({
+  name: "mcp-well-database",
+  version: "1.0.0",
 });
 
-// GET /mcp - Para clientes que querem abrir stream SSE passivo (opcional)
-app.get("/mcp", validateToken, async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
-  const acceptHeader = req.headers.accept || "";
+// Registrar as ferramentas no MCP Server
+console.log(`📦 Registrando ${tools.length} ferramentas...`);
+tools.forEach(tool => {
+  console.log(`  - ${tool.name}: ${tool.description}`);
   
-  console.log(`🔌 GET /mcp - Session: ${sessionId} - Accept: ${acceptHeader}`);
-  
-  // Verificar se cliente aceita SSE
-  if (!acceptHeader.includes("text/event-stream")) {
-    return res.status(406).json({
-      error: "Not Acceptable: Client must accept text/event-stream"
+  // Converter inputSchema para o formato do SDK
+  const schemaProperties = {};
+  if (tool.inputSchema && tool.inputSchema.properties) {
+    Object.entries(tool.inputSchema.properties).forEach(([key, value]) => {
+      // Aqui você precisa converter seu schema para Zod se necessário
+      // Por enquanto, vamos assumir que é compatível
+      schemaProperties[key] = value;
     });
   }
   
-  // Criar sessão se não existir
-  if (!sessionId || !sessions[sessionId]) {
-    const newSessionId = uuidv4();
-    sessions[newSessionId] = { 
-      created: new Date(),
-      protocolVersion: "2025-03-26"
-    };
-    res.setHeader("Mcp-Session-Id", newSessionId);
-  }
-  
-  // Configurar SSE
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no"
-  });
-  
-  // Enviar heartbeat inicial
-  res.write(":ok\n\n");
-  
-  // Armazenar stream para possíveis notificações futuras
-  if (sessions[sessionId]) {
-    sessions[sessionId].stream = res;
-  }
-  
-  // Heartbeat para manter conexão viva
-  const heartbeat = setInterval(() => {
-    res.write(":ping\n\n");
-  }, 30000);
-  
-  // Cleanup ao desconectar
-  req.on("close", () => {
-    console.log(`🔌 SSE stream fechado para sessão ${sessionId}`);
-    clearInterval(heartbeat);
-    if (sessions[sessionId]) {
-      delete sessions[sessionId].stream;
+  mcpServer.tool(
+    tool.name,
+    schemaProperties,
+    async (params) => {
+      console.log(`🔧 Executando ferramenta: ${tool.name}`);
+      return await executeTool(tool.name, params, query);
     }
-  });
-});
-
-// DELETE /mcp - Terminar sessão
-app.delete("/mcp", async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
-  
-  console.log(`🗑️ DELETE /mcp - Session: ${sessionId}`);
-  
-  if (sessionId && sessions[sessionId]) {
-    // Fechar stream SSE se existir
-    if (sessions[sessionId].stream) {
-      sessions[sessionId].stream.end();
-    }
-    delete sessions[sessionId];
-    res.status(204).end();
-  } else {
-    res.status(404).json({ 
-      error: "Session not found" 
-    });
-  }
+  );
 });
 
 // ===============================================
-// ENDPOINTS AUXILIARES
+// TRANSPORTS
 // ===============================================
 
-// Health check para Render
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "healthy",
-    database: dbConnected ? "connected" : "disconnected"
-  });
-});
+// Store transports by session ID
+const transports = {};
 
-// Status e informações do servidor
+// SSE transport (para compatibilidade)
+let sseTransport;
+
+// ===============================================
+// ENDPOINTS
+// ===============================================
+
+// Root endpoint
 app.get("/", (req, res) => {
-  const activeSessions = Object.keys(sessions).length;
-  const sessionsWithStreams = Object.values(sessions).filter(s => s.stream).length;
-  
   res.json({
     name: "mcp-well-database",
     version: "1.0.0",
     status: "OK",
     database: dbConnected ? "Connected" : "Disconnected",
-    transport: "streamable-http",
-    protocolVersion: "2025-03-26",
-    endpoint: "/mcp",
-    authentication: "oauth2",
-    oauth: {
-      discovery: `${SERVER_URL}/.well-known/oauth-authorization-server`,
-      authorize: `${SERVER_URL}/oauth/authorize`,
-      token: `${SERVER_URL}/oauth/token`,
-      register: `${SERVER_URL}/oauth/register`
+    endpoints: {
+      "/": "Server information (this response)",
+      "/sse": "Server-Sent Events endpoint for MCP connection",
+      "/messages": "POST endpoint for MCP messages (SSE)",
+      "/mcp": "Streamable HTTP endpoint for MCP connection"
     },
-    sessions: {
-      active: activeSessions,
-      withStreams: sessionsWithStreams
+    customConnector: {
+      preferred: `${SERVER_URL}/mcp`,
+      alternative: `${SERVER_URL}/sse`,
+      instructions: "Use /mcp for modern clients, /sse for legacy"
     },
-    tools: tools.length,
-    instructions: {
-      claude: `Add as Custom Connector with URL: ${SERVER_URL}/mcp`,
-      inspector: `npx @modelcontextprotocol/inspector -y --url ${SERVER_URL}/mcp`,
-      curl: {
-        initialize: `curl -X POST ${SERVER_URL}/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}'`,
-        listTools: `curl -X POST ${SERVER_URL}/mcp -H "Content-Type: application/json" -H "Mcp-Session-Id: YOUR_SESSION_ID" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'`
-      }
-    }
+    tools: tools.map(t => ({ name: t.name, description: t.description }))
   });
 });
 
 // ===============================================
-// LIMPEZA E INICIALIZAÇÃO
+// SSE ENDPOINTS (Legacy support)
 // ===============================================
 
-// Limpar sessões antigas periodicamente
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  
-  for (const [id, session] of Object.entries(sessions)) {
-    if (now - session.created.getTime() > 3600000) { // 1 hora
-      if (session.stream) {
-        session.stream.end();
-      }
-      delete sessions[id];
-      cleaned++;
-    }
+app.get("/sse", async (req, res) => {
+  console.log("🔌 Nova conexão SSE");
+  try {
+    sseTransport = new SSEServerTransport("/messages", res);
+    await mcpServer.connect(sseTransport);
+    console.log("✅ SSE transport conectado");
+  } catch (error) {
+    console.error("❌ Erro ao conectar SSE:", error);
   }
-  
-  if (cleaned > 0) {
-    console.log(`🧹 Limpeza: ${cleaned} sessões antigas removidas`);
-  }
-}, 300000); // 5 minutos
+});
 
-// Iniciar servidor
+app.post("/messages", async (req, res) => {
+  console.log("📨 Mensagem SSE recebida");
+  try {
+    if (!sseTransport) {
+      return res.status(400).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "SSE transport not initialized"
+        },
+        id: req.body?.id
+      });
+    }
+    await sseTransport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error("❌ Erro ao processar mensagem SSE:", error);
+    res.status(500).json({
+      jsonrpc: "2.0",
+      error: {
+        code: -32603,
+        message: error.message
+      },
+      id: req.body?.id
+    });
+  }
+});
+
+// ===============================================
+// STREAMABLE HTTP ENDPOINT (Moderno)
+// ===============================================
+
+const streamableHttpHandler = async (server, req, res) => {
+  if (req.method === "POST") {
+    const sessionId = req.headers["mcp-session-id"];
+    
+    try {
+      // Check if this is an initialization request
+      const isInit = isInitializeRequest(req.body);
+      
+      // Create a new transport for this session if needed
+      if (!sessionId || !transports[sessionId] || isInit) {
+        console.log(`🆕 Criando novo transport para ${isInit ? "initialize" : "request sem sessão"}`);
+        
+        const newSessionId = sessionId || crypto.randomUUID();
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => newSessionId,
+          onsessioninitialized: (sid) => {
+            console.log(`✅ Transport inicializado com session ID: ${sid}`);
+            transports[sid] = transport;
+          }
+        });
+        
+        // Connect the transport to the server
+        await server.connect(transport);
+        console.log("🔗 Transport conectado ao servidor");
+        
+        // Set session ID header in response
+        res.setHeader("Mcp-Session-Id", newSessionId);
+        
+        // CRUCIAL: Pass req.body as third parameter!
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
+      
+      // Use existing transport
+      if (sessionId && transports[sessionId]) {
+        console.log(`♻️ Usando transport existente para sessão ${sessionId}`);
+        await transports[sessionId].handleRequest(req, res, req.body);
+        return;
+      }
+      
+      // Error: no valid transport
+      console.error(`❌ Nenhum transport válido para sessão ${sessionId}`);
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Invalid session or transport not available"
+        },
+        id: null
+      });
+    } catch (error) {
+      console.error("❌ Erro processando request:", error);
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: "Internal server error",
+          data: String(error)
+        },
+        id: null
+      });
+    }
+  } 
+  else if (req.method === "GET") {
+    // Handle SSE stream request
+    const sessionId = req.headers["mcp-session-id"];
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send("Invalid or missing session ID");
+      return;
+    }
+    
+    console.log(`🔄 Estabelecendo stream SSE para sessão ${sessionId}`);
+    await transports[sessionId].handleRequest(req, res);
+  }
+  else if (req.method === "DELETE") {
+    // Handle session termination
+    const sessionId = req.headers["mcp-session-id"];
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send("Invalid or missing session ID");
+      return;
+    }
+    
+    console.log(`🗑️ Terminando sessão ${sessionId}`);
+    await transports[sessionId].handleRequest(req, res);
+    delete transports[sessionId];
+  }
+  else {
+    res.status(405).send("Method not allowed");
+  }
+};
+
+// Endpoint principal /mcp
+app.all("/mcp", async (req, res) => {
+  await streamableHttpHandler(mcpServer, req, res);
+});
+
+// ===============================================
+// INICIALIZAÇÃO
+// ===============================================
+
 app.listen(PORT, () => {
   console.log(`
-🚀 MCP Well Database Server v1.0.0
+🚀 MCP Well Database Server
 📡 Porta: ${PORT}
 🔗 URL: ${SERVER_URL}
-📋 Transport: Streamable HTTP (2025-03-26)
-🔓 Autenticação: OAuth 2.1 (Mock para desenvolvimento)
+✅ Ferramentas: ${tools.length} registradas
 
-✨ Endpoint único: ${SERVER_URL}/mcp
-  - POST: Enviar mensagens JSON-RPC
-  - GET: Abrir stream SSE passivo (opcional)
-  - DELETE: Terminar sessão
+🔌 Endpoints disponíveis:
+- Streamable HTTP: ${SERVER_URL}/mcp (recomendado)
+- SSE Legacy: ${SERVER_URL}/sse + /messages
 
-🔐 OAuth Endpoints:
-  - Discovery: ${SERVER_URL}/.well-known/oauth-authorization-server
-  - Register: ${SERVER_URL}/oauth/register
-  - Authorize: ${SERVER_URL}/oauth/authorize
-  - Token: ${SERVER_URL}/oauth/token
-
-🔧 Ferramentas disponíveis: ${tools.length}
-  ${tools.map(t => `- ${t.name}`).join("\n  ")}
-
-🧪 Como testar:
-1. Inspector: npx @modelcontextprotocol/inspector -y --url ${SERVER_URL}/mcp
-2. Claude: Settings > Connectors > Add > ${SERVER_URL}/mcp
-3. Curl: Veja exemplos em ${SERVER_URL}/
+🧪 Para Custom Connector no Claude:
+- Use: ${SERVER_URL}/mcp
 
 📊 Status:
 - Banco de dados: ${dbConnected ? "✅ Conectado" : "❌ Desconectado"}
-- Sessões ativas: 0
-- OAuth: Mock mode (auto-approval)
   `);
+});
+
+// Handle server shutdown
+process.on("SIGINT", async () => {
+  console.log("🛑 Desligando servidor...");
+  for (const sessionId in transports) {
+    try {
+      console.log(`Fechando transport para sessão ${sessionId}`);
+      await transports[sessionId].close();
+      delete transports[sessionId];
+    } catch (error) {
+      console.error("Erro ao fechar transport:", error);
+    }
+  }
+  console.log("✅ Servidor desligado");
+  process.exit(0);
 });
