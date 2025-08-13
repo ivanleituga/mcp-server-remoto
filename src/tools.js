@@ -1,4 +1,4 @@
-const { schema } = require("../utils/utils");
+const { schema } = require("../utils/db_schema");
 
 const tools = [
   {

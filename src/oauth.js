@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
+const { getAuthorizePage, getDocsPage } = require("../utils/templates");
 
 // ===============================================
 // ARMAZENAMENTO EM MEMÓRIA
@@ -160,25 +161,33 @@ function setupOAuthEndpoints(app) {
       code_challenge,
       code_challenge_method
     } = req.query;
-    
+  
     console.log("🔐 Authorization Request:");
     console.log(`   Client ID: ${client_id}`);
     console.log(`   Redirect URI: ${redirect_uri}`);
+    console.log(`   Response Type: ${response_type}`);  // Adicionar log
     console.log(`   Scope: ${scope}`);
     console.log(`   PKCE: ${code_challenge ? "Yes" : "No"}`);
-    
+  
     // Validar cliente
     const client = storage.clients.get(client_id);
     if (!client) {
       console.log("❌ Cliente não encontrado:", client_id);
       return res.status(400).send("Invalid client_id");
     }
-    
+  
     // Validar redirect_uri
     if (!client.redirect_uris.includes(redirect_uri)) {
       console.log("❌ Redirect URI inválido:", redirect_uri);
       return res.status(400).send("Invalid redirect_uri");
     }
+  
+    // Validar response_type - ADICIONAR ESTA VALIDAÇÃO
+    if (response_type !== "code") {
+      console.log("❌ Response type inválido:", response_type);
+      return res.status(400).send("Invalid response_type - only 'code' is supported");
+    }
+
     
     // AUTO-APROVAÇÃO (para desenvolvimento)
     if (config.AUTO_APPROVE) {
@@ -207,27 +216,8 @@ function setupOAuthEndpoints(app) {
       return res.redirect(redirectUrl.toString());
     }
     
-    // Em produção, aqui mostraria uma tela de consentimento
-    res.send(`
-      <html>
-        <body style="font-family: sans-serif; padding: 40px; max-width: 600px; margin: 0 auto;">
-          <h1>Autorização OAuth</h1>
-          <p>O aplicativo <strong>${client.client_name}</strong> está solicitando acesso ao MCP Server.</p>
-          <p>Escopo solicitado: <code>${scope || "mcp"}</code></p>
-          <form method="POST" action="/oauth/authorize">
-            <input type="hidden" name="client_id" value="${client_id}">
-            <input type="hidden" name="redirect_uri" value="${redirect_uri}">
-            <input type="hidden" name="response_type" value="${response_type}">
-            <input type="hidden" name="scope" value="${scope}">
-            <input type="hidden" name="state" value="${state || ""}">
-            <input type="hidden" name="code_challenge" value="${code_challenge || ""}">
-            <input type="hidden" name="code_challenge_method" value="${code_challenge_method || ""}">
-            <button type="submit" name="action" value="approve" style="padding: 10px 20px; margin: 10px;">Aprovar</button>
-            <button type="submit" name="action" value="deny" style="padding: 10px 20px; margin: 10px;">Negar</button>
-          </form>
-        </body>
-      </html>
-    `);
+    // Em produção, usar o template
+    res.send(getAuthorizePage(client, req.query));
   });
   
   // POST para processar aprovação/negação
@@ -492,72 +482,7 @@ function setupOAuthEndpoints(app) {
   // -----------------------------------------------
   
   app.get("/docs", (req, res) => {
-    res.send(`
-      <html>
-        <head>
-          <title>MCP OAuth Documentation</title>
-          <style>
-            body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-            h1 { color: #333; }
-            h2 { color: #666; margin-top: 30px; }
-            code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
-            pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
-            .endpoint { background: #e8f4f8; padding: 10px; margin: 10px 0; border-radius: 5px; }
-            .method { font-weight: bold; color: #0066cc; }
-          </style>
-        </head>
-        <body>
-          <h1>🔐 MCP OAuth Server Documentation</h1>
-          
-          <h2>Discovery Endpoints</h2>
-          <div class="endpoint">
-            <span class="method">GET</span> <code>/.well-known/oauth-authorization-server</code>
-            <br>OAuth 2.1 Authorization Server Metadata
-          </div>
-          <div class="endpoint">
-            <span class="method">GET</span> <code>/.well-known/oauth-protected-resource</code>
-            <br>Protected Resource Metadata
-          </div>
-          
-          <h2>OAuth Flow</h2>
-          <div class="endpoint">
-            <span class="method">POST</span> <code>/oauth/register</code>
-            <br>Dynamic Client Registration
-          </div>
-          <div class="endpoint">
-            <span class="method">GET</span> <code>/oauth/authorize</code>
-            <br>Authorization Endpoint (with PKCE support)
-          </div>
-          <div class="endpoint">
-            <span class="method">POST</span> <code>/oauth/token</code>
-            <br>Token Exchange Endpoint
-          </div>
-          <div class="endpoint">
-            <span class="method">POST</span> <code>/oauth/revoke</code>
-            <br>Token Revocation Endpoint
-          </div>
-          
-          <h2>Configuration</h2>
-          <pre>
-Auto-Approve: ${config.AUTO_APPROVE}
-Token Expiry: ${config.TOKEN_EXPIRY / 1000} seconds
-Code Expiry: ${config.CODE_EXPIRY / 1000} seconds
-Server URL: ${config.SERVER_URL}
-          </pre>
-          
-          <h2>Current Status</h2>
-          <p>Check <a href="/oauth/status">/oauth/status</a> for current server status.</p>
-          
-          <h2>Testing with Claude</h2>
-          <ol>
-            <li>Add Custom Connector: <code>${config.SERVER_URL}/mcp</code></li>
-            <li>Claude will auto-discover OAuth endpoints</li>
-            <li>Complete authorization flow</li>
-            <li>Tools will be available after authentication</li>
-          </ol>
-        </body>
-      </html>
-    `);
+    res.send(getDocsPage(config));
   });
   
   return { validateToken };
