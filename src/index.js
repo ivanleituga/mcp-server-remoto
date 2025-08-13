@@ -1,29 +1,29 @@
-const { tools, executeTool } = require("./tools");
 const { getHomePage } = require("../utils/templates");
 const { setupOAuthEndpoints } = require("./oauth");
 const { query, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
+const { createMcpServer, toolsCount } = require("./mcp_server");
+const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
 
-// IMPORTANTE: Importar do SDK MCP
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+// ===============================================
+// CONFIGURAÇÃO
+// ===============================================
 
 const app = express();
-
-// Configuração
 const PORT = process.env.PORT || 3000;
 const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
-// Middlewares
+// ===============================================
+// MIDDLEWARES
+// ===============================================
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// CORS simples e direto
 app.use(cors({
   origin: true,
   credentials: true
@@ -39,37 +39,10 @@ const { validateToken } = setupOAuthEndpoints(app);
 // CRIAR MCP SERVER
 // ===============================================
 
-const mcpServer = new McpServer({
-  name: "mcp-well-database",
-  version: "1.0.0",
-});
-
-// Registrar as ferramentas
-console.log(`📦 Registrando ${tools.length} ferramentas...`);
-tools.forEach(tool => {
-  console.log(`  - ${tool.name}`);
-  
-  mcpServer.tool(
-    tool.name,
-    tool.inputSchema.properties || {},
-    async (params) => {
-      console.log(`\n🔧 Executando: ${tool.name}`);
-      console.log("   Params:", JSON.stringify(params, null, 2));
-      
-      try {
-        const result = await executeTool(tool.name, params, query);
-        console.log("   ✅ Sucesso");
-        return result;
-      } catch (error) {
-        console.error("   ❌ Erro:", error.message);
-        throw error;
-      }
-    }
-  );
-});
+const mcpServer = createMcpServer(query);
 
 // ===============================================
-// ENDPOINT MCP ÚNICO E SIMPLES
+// ENDPOINT MCP
 // ===============================================
 
 app.post("/mcp", validateToken, async (req, res) => {
@@ -88,7 +61,7 @@ app.post("/mcp", validateToken, async (req, res) => {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
-          sessionManager.add(sid, transport); // MUDANÇA: usar sessionManager
+          sessionManager.add(sid, transport);
         }
       });
       
@@ -139,7 +112,7 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
     database: isConnected(),
-    sessions: sessionManager.count(),
+    sessions: sessionManager.count()
   });
 });
 
@@ -149,7 +122,7 @@ app.get("/", (req, res) => {
     SERVER_URL, 
     isConnected(),
     sessionManager.count(),
-    tools.length
+    toolsCount
   ));
 });
 
@@ -171,19 +144,20 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔗 URL: ${SERVER_URL}`);
   console.log(`📊 Database: ${isConnected() ? "Connected" : "Disconnected"}`);
-  console.log(`🔧 Tools: ${tools.length} registered`);
+  console.log(`🔧 Tools: ${toolsCount} registered`);
   console.log("🔐 OAuth: Enabled (auto-approve)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
   console.log("");
 });
 
-// Graceful shutdown
+// ===============================================
+// GRACEFUL SHUTDOWN
+// ===============================================
+
 process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down...");
-  
   await sessionManager.closeAll();
-  
   console.log("✅ Server stopped");
   process.exit(0);
 });

@@ -1,6 +1,4 @@
-// utils/templates.js
 // Templates HTML para as páginas do servidor
-
 const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
   <!DOCTYPE html>
   <html>
@@ -241,10 +239,10 @@ const getDocsPage = (config) => `
       
       <h2>Configuration</h2>
       <pre>
-Auto-Approve: ${config.AUTO_APPROVE}
-Token Expiry: ${config.TOKEN_EXPIRY / 1000} seconds
-Code Expiry: ${config.CODE_EXPIRY / 1000} seconds
-Server URL: ${config.SERVER_URL}
+       Auto-Approve: ${config.AUTO_APPROVE}
+       Token Expiry: ${config.TOKEN_EXPIRY / 1000} seconds
+       Code Expiry: ${config.CODE_EXPIRY / 1000} seconds
+       Server URL: ${config.SERVER_URL}
       </pre>
       
       <h2>Current Status</h2>
