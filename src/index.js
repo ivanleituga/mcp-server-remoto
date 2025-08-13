@@ -1,10 +1,10 @@
 const { tools, executeTool } = require("./tools");
 const { getHomePage } = require("../utils/templates");
 const { setupOAuthEndpoints } = require("./oauth");
+const { query, isConnected } = require("./database"); // NOVO IMPORT
 require("dotenv").config();
 
 const express = require("express");
-const { Pool } = require("pg");
 const cors = require("cors");
 const crypto = require("crypto");
 
@@ -28,44 +28,7 @@ app.use(cors({
   credentials: true
 }));
 
-// Pool PostgreSQL
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
-  connectionTimeoutMillis: 10000,
-});
-
-let dbConnected = false;
-
-// Testar conexão com o banco
-(async () => {
-  try {
-    const client = await pool.connect();
-    client.release();
-    dbConnected = true;
-    console.log("✅ Banco de dados conectado");
-  } catch (err) {
-    console.error("❌ Banco indisponível:", err.message);
-  }
-})();
-
-// Query helper
-async function query(sql) {
-  if (!dbConnected) {
-    throw new Error("Banco de dados não disponível");
-  }
-  
-  const client = await pool.connect();
-  try {
-    const result = await client.query(sql);
-    return result.rows;
-  } finally {
-    client.release();
-  }
-}
+// REMOVI: Todo código do Pool e conexão do banco (agora em database.js)
 
 // ===============================================
 // CONFIGURAR OAUTH
@@ -95,7 +58,7 @@ tools.forEach(tool => {
       console.log("   Params:", JSON.stringify(params, null, 2));
       
       try {
-        const result = await executeTool(tool.name, params, query);
+        const result = await executeTool(tool.name, params, query); // USANDO query importado
         console.log("   ✅ Sucesso");
         return result;
       } catch (error) {
@@ -182,14 +145,19 @@ app.post("/mcp", validateToken, async (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
-    database: dbConnected,
+    database: isConnected(), // MUDANÇA: usar isConnected()
     sessions: Object.keys(transports).length
   });
 });
 
 // Página inicial
 app.get("/", (req, res) => {
-  res.send(getHomePage(SERVER_URL, dbConnected, Object.keys(transports).length, tools.length));
+  res.send(getHomePage(
+    SERVER_URL, 
+    isConnected(), // MUDANÇA: usar isConnected()
+    Object.keys(transports).length, 
+    tools.length
+  ));
 });
 
 // ===============================================
@@ -214,26 +182,16 @@ setInterval(() => {
 // ===============================================
 
 app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════╗
-║           MCP WELL DATABASE SERVER             ║
-╠════════════════════════════════════════════════╣
-║                                                 ║
-║  🚀 Status: ONLINE                             ║
-║  📡 Port: ${PORT}                              ║
-║  🔗 URL: ${SERVER_URL}                         ║
-║                                                 ║
-║  📊 Database: ${dbConnected ? "✅ Connected" : "❌ Disconnected"}    ║
-║  🔧 Tools: ${tools.length} registered          ║
-║  🔐 OAuth: Enabled (auto-approve)              ║
-║                                                 ║
-╠════════════════════════════════════════════════╣
-║                                                 ║
-║  CONNECT WITH CLAUDE:                          ║
-║  ${SERVER_URL}/mcp                             ║
-║                                                 ║
-╚════════════════════════════════════════════════╝
-`);
+  console.log("\n🚀 MCP Well Database Server");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🔗 URL: ${SERVER_URL}`);
+  console.log(`📊 Database: ${isConnected() ? "Connected" : "Disconnected"}`);
+  console.log(`🔧 Tools: ${tools.length} registered`);
+  console.log("🔐 OAuth: Enabled (auto-approve)");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
+  console.log("");
 });
 
 // Graceful shutdown
