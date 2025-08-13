@@ -1,7 +1,8 @@
 const { tools, executeTool } = require("./tools");
 const { getHomePage } = require("../utils/templates");
 const { setupOAuthEndpoints } = require("./oauth");
-const { query, isConnected } = require("./database"); // NOVO IMPORT
+const { query, isConnected } = require("./database");
+const sessionManager = require("./session_manager");
 require("dotenv").config();
 
 const express = require("express");
@@ -27,8 +28,6 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-
-// REMOVI: Todo código do Pool e conexão do banco (agora em database.js)
 
 // ===============================================
 // CONFIGURAR OAUTH
@@ -58,7 +57,7 @@ tools.forEach(tool => {
       console.log("   Params:", JSON.stringify(params, null, 2));
       
       try {
-        const result = await executeTool(tool.name, params, query); // USANDO query importado
+        const result = await executeTool(tool.name, params, query);
         console.log("   ✅ Sucesso");
         return result;
       } catch (error) {
@@ -68,12 +67,6 @@ tools.forEach(tool => {
     }
   );
 });
-
-// ===============================================
-// TRANSPORTS (Sessões)
-// ===============================================
-
-const transports = {};
 
 // ===============================================
 // ENDPOINT MCP ÚNICO E SIMPLES
@@ -87,7 +80,7 @@ app.post("/mcp", validateToken, async (req, res) => {
   
   try {
     // Criar novo transport se necessário
-    if (!sessionId || !transports[sessionId] || isInit) {
+    if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
       const newSessionId = sessionId || crypto.randomUUID();
       
       console.log(`🆕 Nova sessão: ${newSessionId}`);
@@ -95,8 +88,7 @@ app.post("/mcp", validateToken, async (req, res) => {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
-          console.log(`✅ Sessão inicializada: ${sid}`);
-          transports[sid] = transport;
+          sessionManager.add(sid, transport); // MUDANÇA: usar sessionManager
         }
       });
       
@@ -107,9 +99,10 @@ app.post("/mcp", validateToken, async (req, res) => {
     }
     
     // Usar transport existente
-    if (transports[sessionId]) {
+    const transport = sessionManager.get(sessionId);
+    if (transport) {
       console.log(`♻️ Reusando sessão: ${sessionId}`);
-      await transports[sessionId].handleRequest(req, res, req.body);
+      await transport.handleRequest(req, res, req.body);
       return;
     }
     
@@ -145,8 +138,8 @@ app.post("/mcp", validateToken, async (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
-    database: isConnected(), // MUDANÇA: usar isConnected()
-    sessions: Object.keys(transports).length
+    database: isConnected(),
+    sessions: sessionManager.count(),
   });
 });
 
@@ -154,8 +147,8 @@ app.get("/health", (req, res) => {
 app.get("/", (req, res) => {
   res.send(getHomePage(
     SERVER_URL, 
-    isConnected(), // MUDANÇA: usar isConnected()
-    Object.keys(transports).length, 
+    isConnected(),
+    sessionManager.count(),
     tools.length
   ));
 });
@@ -165,16 +158,7 @@ app.get("/", (req, res) => {
 // ===============================================
 
 setInterval(() => {
-  // Limpar sessões antigas (mais de 1 hora)
-  const now = Date.now();
-  const timeout = 3600000; // 1 hora
-  
-  for (const [sessionId, transport] of Object.entries(transports)) {
-    // Aqui você poderia adicionar timestamp nas sessões
-    // Por ora, apenas logamos
-  }
-  
-  console.log(`🧹 Sessões ativas: ${Object.keys(transports).length}`);
+  sessionManager.cleanup();
 }, 300000); // A cada 5 minutos
 
 // ===============================================
@@ -198,13 +182,7 @@ app.listen(PORT, () => {
 process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down...");
   
-  for (const sessionId in transports) {
-    try {
-      await transports[sessionId].close();
-    } catch (error) {
-      // Ignore errors during shutdown
-    }
-  }
+  await sessionManager.closeAll();
   
   console.log("✅ Server stopped");
   process.exit(0);
