@@ -8,84 +8,62 @@ function createMcpServer(queryFunction) {
     version: "1.0.0",
   });
 
-  // Registrar as ferramentas
+  // Registrar as ferramentas normalmente
   console.log(`📦 Registrando ${tools.length} ferramentas...`);
-  
-  // Armazenar handlers para uso posterior
-  const toolHandlers = {};
   
   tools.forEach(tool => {
     console.log(`  - ${tool.name}`);
     
-    // Guardar o handler
-    const handler = async (params) => {
-      console.log(`\n🔧 Executando: ${tool.name}`);
-      console.log("   Params:", JSON.stringify(params, null, 2));
-      
-      try {
-        const result = await executeTool(tool.name, params, queryFunction);
-        console.log("   ✅ Sucesso");
-        return result;
-      } catch (error) {
-        console.error("   ❌ Erro:", error.message);
-        throw error;
-      }
-    };
-    
-    toolHandlers[tool.name] = handler;
-    
-    // Registrar a ferramenta (mantém funcionando)
     mcpServer.tool(
       tool.name,
       tool.inputSchema.properties || {},
-      handler
+      async (params) => {
+        console.log(`\n🔧 Executando: ${tool.name}`);
+        console.log("   Params:", JSON.stringify(params, null, 2));
+        
+        try {
+          const result = await executeTool(tool.name, params, queryFunction);
+          console.log("   ✅ Sucesso");
+          return result;
+        } catch (error) {
+          console.error("   ❌ Erro:", error.message);
+          throw error;
+        }
+      }
     );
   });
 
-  // HACK CRÍTICO: Sobrescrever o método interno após o registro
+  // Interceptar no nível do transport (mais baixo)
   const originalConnect = mcpServer.connect.bind(mcpServer);
   
   mcpServer.connect = async function(transport) {
-    const result = await originalConnect(transport);
+    console.log("🔌 Conectando e configurando interceptação...");
     
-    // Após conectar, interceptar as requisições
-    if (mcpServer.server && mcpServer.server._handleRequest) {
-      const originalHandle = mcpServer.server._handleRequest.bind(mcpServer.server);
+    // Interceptar o método send do transport
+    if (transport && transport.send) {
+      const originalSend = transport.send.bind(transport);
       
-      mcpServer.server._handleRequest = async function(request) {
-        // Interceptar tools/list
-        if (request.method === "tools/list") {
-          console.log("📋 Interceptando tools/list - retornando com descriptions!");
+      transport.send = function(message) {
+        // Se for resposta de tools/list, modificar
+        if (message.result && message.result.tools) {
+          console.log("📤 Modificando resposta tools/list");
           
-          return {
-            tools: tools.map(tool => ({
-              name: tool.name,
-              description: tool.description,  // ← No nível raiz!
-              inputSchema: tool.inputSchema
-            }))
-          };
+          message.result.tools = tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+          }));
         }
         
-        // Interceptar tools/call
-        if (request.method === "tools/call") {
-          const { name, arguments: args } = request.params;
-          console.log(`🔧 Interceptando tools/call: ${name}`);
-          
-          const handler = toolHandlers[name];
-          if (handler) {
-            return await handler(args);
-          }
-        }
-        
-        // Outros requests passam normalmente
-        return originalHandle(request);
+        return originalSend(message);
       };
     }
     
-    return result;
+    // Conectar normalmente
+    return await originalConnect(transport);
   };
 
-  console.log("\n✅ Servidor configurado com interceptação de requests!");
+  console.log("\n✅ Servidor configurado!");
   
   return mcpServer;
 }
