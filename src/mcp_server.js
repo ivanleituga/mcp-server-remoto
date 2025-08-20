@@ -8,19 +8,16 @@ function createMcpServer(queryFunction) {
     version: "1.0.0",
   });
 
-  // Registrar as ferramentas CORRETAMENTE
+  // Registrar as ferramentas
   console.log(`📦 Registrando ${tools.length} ferramentas...`);
   
   tools.forEach(tool => {
     console.log(`  - ${tool.name}`);
     
-    // FORMA CORRETA: Passar o objeto completo de definição!
+    // VOLTAR AO MÉTODO ORIGINAL (que funciona)
     mcpServer.tool(
-      {
-        name: tool.name,
-        description: tool.description,      // ← Agora a descrição VAI ser usada!
-        inputSchema: tool.inputSchema       // ← Schema completo, não só properties!
-      },
+      tool.name,
+      tool.inputSchema.properties || {},
       async (params) => {
         console.log(`\n🔧 Executando: ${tool.name}`);
         console.log("   Params:", JSON.stringify(params, null, 2));
@@ -37,7 +34,52 @@ function createMcpServer(queryFunction) {
     );
   });
 
-  console.log("\n✅ Ferramentas registradas com descrições completas!");
+  // HACK: Sobrescrever o método interno que lista as ferramentas
+  // para incluir as descrições corretas
+  const originalListTools = mcpServer.listTools?.bind(mcpServer);
+  
+  if (originalListTools) {
+    mcpServer.listTools = function() {
+      const result = originalListTools();
+      // Adicionar descrições ao resultado
+      if (result && result.tools) {
+        result.tools = result.tools.map(t => {
+          const fullTool = tools.find(tool => tool.name === t.name);
+          if (fullTool) {
+            return {
+              ...t,
+              description: fullTool.description
+            };
+          }
+          return t;
+        });
+      }
+      return result;
+    };
+  }
+
+  // Alternativa: Interceptar o método _handleRequest se existir
+  if (mcpServer._handleRequest) {
+    const original = mcpServer._handleRequest.bind(mcpServer);
+    
+    mcpServer._handleRequest = async function(request) {
+      if (request.method === "tools/list") {
+        console.log("📋 Interceptando tools/list para adicionar descrições!");
+        
+        return {
+          tools: tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+          }))
+        };
+      }
+      
+      return original(request);
+    };
+  }
+
+  console.log("\n✅ Servidor configurado!");
   
   return mcpServer;
 }
