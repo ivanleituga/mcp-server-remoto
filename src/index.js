@@ -22,12 +22,22 @@ const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
 // MIDDLEWARES
 // ===============================================
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// IMPORTANTE: Aumentar limite para requisições grandes
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cors({
   origin: true,
   credentials: true
 }));
+
+// Log de todas as requisições
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path}`);
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log("   Body keys:", Object.keys(req.body));
+  }
+  next();
+});
 
 // ===============================================
 // CONFIGURAR OAUTH
@@ -49,24 +59,40 @@ app.post("/mcp", validateToken, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
   const isInit = req.body?.method === "initialize";
   
-  console.log(`\n📨 ${req.body?.method || "unknown"} - Session: ${sessionId || "new"}`);
+  console.log("\n🔄 MCP Request:");
+  console.log(`   Method: ${req.body?.method || "unknown"}`);
+  console.log(`   Session: ${sessionId || "new"}`);
+  
+  // Log detalhado para requests de tools
+  if (req.body?.method === "tools/call") {
+    console.log("   🔧 Tool Call Details:");
+    console.log(`      Name: ${req.body?.params?.name}`);
+    console.log("      Arguments:", req.body?.params?.arguments);
+  }
   
   try {
-    // Criar novo transport se necessário
+    // Verificar se é uma requisição inicial ou sem sessão
     if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
       const newSessionId = sessionId || crypto.randomUUID();
       
-      console.log(`🆕 Nova sessão: ${newSessionId}`);
+      console.log(`🆕 Criando nova sessão: ${newSessionId}`);
       
+      // Criar novo transport com configurações corretas
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
+          console.log(`✅ Sessão inicializada: ${sid}`);
           sessionManager.add(sid, transport);
         }
       });
       
+      // Conectar o servidor ao transport
       await mcpServer.connect(transport);
+      
+      // Definir header de sessão
       res.setHeader("Mcp-Session-Id", newSessionId);
+      
+      // Processar a requisição
       await transport.handleRequest(req, res, req.body);
       return;
     }
@@ -75,6 +101,8 @@ app.post("/mcp", validateToken, async (req, res) => {
     const transport = sessionManager.get(sessionId);
     if (transport) {
       console.log(`♻️ Reusando sessão: ${sessionId}`);
+      
+      // Processar a requisição com o transport existente
       await transport.handleRequest(req, res, req.body);
       return;
     }
@@ -85,18 +113,20 @@ app.post("/mcp", validateToken, async (req, res) => {
       jsonrpc: "2.0",
       error: {
         code: -32000,
-        message: "Invalid session"
+        message: "Invalid session - please reinitialize"
       },
       id: req.body?.id || null
     });
     
   } catch (error) {
-    console.error("❌ Erro:", error.message);
+    console.error("❌ Erro no MCP:", error);
+    console.error("   Stack:", error.stack);
+    
     res.status(500).json({
       jsonrpc: "2.0",
       error: {
         code: -32603,
-        message: error.message
+        message: `Internal error: ${error.message}`
       },
       id: req.body?.id || null
     });
@@ -112,7 +142,8 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
     database: isConnected(),
-    sessions: sessionManager.count()
+    sessions: sessionManager.count(),
+    tools: toolsCount
   });
 });
 

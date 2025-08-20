@@ -66,71 +66,108 @@ const tools = [
 ];
 
 async function executeTool(toolName, args = {}, queryFn) {
+  console.log("\n🔨 executeTool chamado:");
+  console.log("   Tool:", toolName);
+  console.log("   Args recebidos:", JSON.stringify(args, null, 2));
+  
   try {
     switch (toolName) {
     case "fetch_well_database_schema":
+      console.log("   ✅ Retornando schema");
       return { 
         content: [{ type: "text", text: schema }],
         isError: false
       };
       
-    case "query_well_database": {  // ← IMPORTANTE: Abrir chaves aqui!
-      console.log("🔍 DEBUG query_well_database:");
-      console.log("   typeof args:", typeof args);
-      console.log("   args keys:", Object.keys(args));
-      console.log("   args.sql:", args.sql);
-      console.log("   args completo:", JSON.stringify(args, null, 2));
-
-      // Tentar extrair SQL de várias formas
-      const sql = args.sql || args.query || args.arguments?.sql;
-
+    case "query_well_database": {
+      console.log("   🔍 Executando query_well_database");
+        
+      // O SDK já passa os argumentos desempacotados
+      const sql = args.sql;
+        
+      console.log("   SQL extraído:", sql);
+        
       if (!sql) {
-        throw new Error(`SQL não encontrado. Recebido: ${JSON.stringify(args)}`);
+        throw new Error(`SQL query não fornecida. Recebido: ${JSON.stringify(args)}`);
       }
-
+        
       try {
-        const data = await queryFn(sql);  // ← USAR 'sql' não 'args.sql'!
+        console.log("   📊 Executando query no banco...");
+        const data = await queryFn(sql);
+        console.log(`   ✅ Query executada: ${data.length} registros`);
+          
         return { 
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify(data, null, 2) 
+          }],
           isError: false
         };
       } catch (err) {
+        console.error("   ❌ Erro na query:", err.message);
         return { 
-          content: [{ type: "text", text: `Erro: ${err.message}` }],
+          content: [{ 
+            type: "text", 
+            text: `Erro na query: ${err.message}` 
+          }],
           isError: true
         };
       }
-    }       
-    case "generate_lithological_profile":
+    }
+      
+    case "generate_lithological_profile": {
+      console.log("   🎨 Gerando perfil litológico");
+        
+      const wellName = args.wellName;
+        
+      if (!wellName) {
+        throw new Error("Nome do poço não fornecido");
+      }
+        
+      console.log("   Poço:", wellName);
+        
       try {
-        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
+        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
+        console.log("   Fazendo request para:", url);
+          
         const response = await fetch(url, {
           headers: { "Accept": "text/html" },
           signal: AbortSignal.timeout(30000)
         });
           
         if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
+          throw new Error(`API retornou erro: ${response.status}`);
         }
           
         const html = await response.text();
+        console.log("   ✅ HTML recebido:", html.length, "caracteres");
+          
         return { 
           content: [{ type: "text", text: html }],
           isError: false
         };
       } catch (err) {
+        console.error("   ❌ Erro ao gerar perfil:", err.message);
         return { 
-          content: [{ type: "text", text: `Error: ${err.message}` }],
+          content: [{ 
+            type: "text", 
+            text: `Erro ao gerar perfil: ${err.message}` 
+          }],
           isError: true
         };
       }
+    }
       
     default:
-      throw new Error(`Tool not found: ${toolName}`);
+      throw new Error(`Ferramenta não encontrada: ${toolName}`);
     }
   } catch (error) {
+    console.error("   ❌ Erro geral:", error.message);
     return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
+      content: [{ 
+        type: "text", 
+        text: `Erro: ${error.message}` 
+      }],
       isError: true
     };
   }

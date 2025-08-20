@@ -1,71 +1,69 @@
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { tools, executeTool } = require("./tools");
 
-// Criar instância do servidor MCP
+// Criar instância do servidor MCP usando Server (não McpServer)
 function createMcpServer(queryFunction) {
-  const mcpServer = new McpServer({
+  const server = new Server({
     name: "mcp-well-database",
     version: "1.0.0",
+  }, {
+    capabilities: {
+      tools: {}
+    }
   });
 
-  // Registrar as ferramentas normalmente
-  console.log(`📦 Registrando ${tools.length} ferramentas...`);
-  
-  tools.forEach(tool => {
-    console.log(`  - ${tool.name}`);
+  // Importar os schemas necessários
+  const { ListToolsRequestSchema, CallToolRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
+
+  // Registrar handler para listar tools
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    console.log("📋 Listando ferramentas...");
     
-    mcpServer.tool(
-      tool.name,
-      tool.inputSchema.properties || {},
-      async (params) => {
-        console.log(`\n🔧 Executando: ${tool.name}`);
-        console.log("   Params:", JSON.stringify(params, null, 2));
-        
-        try {
-          const result = await executeTool(tool.name, params, queryFunction);
-          console.log("   ✅ Sucesso");
-          return result;
-        } catch (error) {
-          console.error("   ❌ Erro:", error.message);
-          throw error;
-        }
-      }
-    );
+    return {
+      tools: tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }))
+    };
   });
 
-  // Interceptar no nível do transport (mais baixo)
-  const originalConnect = mcpServer.connect.bind(mcpServer);
-  
-  mcpServer.connect = async function(transport) {
-    console.log("🔌 Conectando e configurando interceptação...");
+  // Registrar handler para executar tools
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    console.log("\n🔧 Tool Request:");
+    console.log("   Method:", request.method);
+    console.log("   Tool Name:", request.params.name);
+    console.log("   Arguments:", JSON.stringify(request.params.arguments, null, 2));
     
-    // Interceptar o método send do transport
-    if (transport && transport.send) {
-      const originalSend = transport.send.bind(transport);
+    const toolName = request.params.name;
+    const args = request.params.arguments || {};
+    
+    try {
+      const result = await executeTool(toolName, args, queryFunction);
+      console.log("   ✅ Tool executada com sucesso");
       
-      transport.send = function(message) {
-        // Se for resposta de tools/list, modificar
-        if (message.result && message.result.tools) {
-          console.log("📤 Modificando resposta tools/list");
-          
-          message.result.tools = tools.map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema
-          }));
-        }
-        
-        return originalSend(message);
+      // Retornar no formato correto do MCP
+      return {
+        content: result.content,
+        isError: result.isError || false
+      };
+    } catch (error) {
+      console.error("   ❌ Erro na tool:", error.message);
+      
+      return {
+        content: [{ 
+          type: "text", 
+          text: `Erro: ${error.message}` 
+        }],
+        isError: true
       };
     }
-    
-    // Conectar normalmente
-    return await originalConnect(transport);
-  };
+  });
 
-  console.log("\n✅ Servidor configurado!");
+  console.log("\n✅ MCP Server configurado com sucesso!");
+  console.log(`📦 ${tools.length} ferramentas registradas`);
   
-  return mcpServer;
+  return server;
 }
 
 // Exportar função de criação e contador de tools
