@@ -74,9 +74,22 @@ async function executeTool(toolName, args = {}, queryFn) {
         isError: false
       };
       
-    case "query_well_database":
+    case "query_well_database": {  // ← IMPORTANTE: Abrir chaves aqui!
+      console.log("🔍 DEBUG query_well_database:");
+      console.log("   typeof args:", typeof args);
+      console.log("   args keys:", Object.keys(args));
+      console.log("   args.sql:", args.sql);
+      console.log("   args completo:", JSON.stringify(args, null, 2));
+
+      // Tentar extrair SQL de várias formas
+      const sql = args.sql || args.query || args.arguments?.sql;
+
+      if (!sql) {
+        throw new Error(`SQL não encontrado. Recebido: ${JSON.stringify(args)}`);
+      }
+
       try {
-        const data = await queryFn(args.sql);
+        const data = await queryFn(sql);  // ← USAR 'sql' não 'args.sql'!
         return { 
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           isError: false
@@ -87,7 +100,7 @@ async function executeTool(toolName, args = {}, queryFn) {
           isError: true
         };
       }
-      
+    }       
     case "generate_lithological_profile":
       try {
         const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
