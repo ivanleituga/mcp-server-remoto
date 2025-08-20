@@ -8,13 +8,84 @@ function createMcpServer(queryFunction) {
     version: "1.0.0",
   });
 
-  // Registrar as ferramentas
+  // ========== SUPER DEBUG ==========
+  console.log("\n🔍 INVESTIGANDO McpServer:");
+  console.log("===================================");
+  
+  // 1. Propriedades diretas
+  console.log("Propriedades diretas do mcpServer:");
+  Object.keys(mcpServer).forEach(key => {
+    console.log(`  - ${key}: ${typeof mcpServer[key]}`);
+  });
+  
+  // 2. Métodos do protótipo
+  console.log("\nMétodos do protótipo:");
+  const proto = Object.getPrototypeOf(mcpServer);
+  Object.getOwnPropertyNames(proto).forEach(method => {
+    if (typeof mcpServer[method] === "function") {
+      console.log(`  - ${method}() [${mcpServer[method].length} params]`);
+    }
+  });
+  
+  // 3. Verificar estrutura interna
+  console.log("\nEstrutura interna:");
+  if (mcpServer.tools) console.log("  - mcpServer.tools existe:", typeof mcpServer.tools);
+  if (mcpServer._tools) console.log("  - mcpServer._tools existe:", typeof mcpServer._tools);
+  if (mcpServer.handlers) console.log("  - mcpServer.handlers existe:", typeof mcpServer.handlers);
+  if (mcpServer._handlers) console.log("  - mcpServer._handlers existe:", typeof mcpServer._handlers);
+  
+  // 4. Testar diferentes formas de registrar
+  console.log("\n🧪 TESTANDO REGISTRO DE FERRAMENTAS:");
+  console.log("===================================");
+  
+  // Teste 1: Método original
+  console.log("\nTeste 1: Método original (3 params)");
+  const testTool = tools[0];
+  
+  mcpServer.tool(
+    testTool.name,
+    testTool.inputSchema.properties || {},
+    async (params) => { return { content: [{ type: "text", text: "test" }] }; }
+  );
+  
+  // Verificar como foi armazenado
+  console.log("Após registro, verificando armazenamento:");
+  if (mcpServer.tools) {
+    console.log("  mcpServer.tools:", mcpServer.tools);
+    if (mcpServer.tools.get) {
+      console.log("  Ferramenta armazenada:", mcpServer.tools.get(testTool.name));
+    }
+  }
+  if (mcpServer._tools) {
+    console.log("  mcpServer._tools:", mcpServer._tools);
+  }
+  
+  // 5. Procurar onde as ferramentas são realmente armazenadas
+  console.log("\n🔍 PROCURANDO ARMAZENAMENTO DE TOOLS:");
+  for (const key in mcpServer) {
+    const value = mcpServer[key];
+    if (value && typeof value === "object") {
+      if (value.has && value.has(testTool.name)) {
+        console.log(`  ✅ Ferramentas encontradas em: mcpServer.${key}`);
+        console.log(`     Tipo: ${value.constructor.name}`);
+        console.log("     Conteúdo:", value.get(testTool.name));
+      }
+    }
+  }
+  
+  console.log("===================================\n");
+  // ========== FIM DO DEBUG ==========
+
+  // Limpar e registrar todas as ferramentas normalmente
+  if (mcpServer.tools && mcpServer.tools.clear) {
+    mcpServer.tools.clear();
+  }
+  
   console.log(`📦 Registrando ${tools.length} ferramentas...`);
   
   tools.forEach(tool => {
     console.log(`  - ${tool.name}`);
     
-    // VOLTAR AO MÉTODO ORIGINAL (que funciona)
     mcpServer.tool(
       tool.name,
       tool.inputSchema.properties || {},
@@ -34,49 +105,35 @@ function createMcpServer(queryFunction) {
     );
   });
 
-  // HACK: Sobrescrever o método interno que lista as ferramentas
-  // para incluir as descrições corretas
-  const originalListTools = mcpServer.listTools?.bind(mcpServer);
+  // TENTATIVA DE HACK: Após registrar, modificar as ferramentas armazenadas
+  console.log("\n🔧 Tentando adicionar descriptions...");
   
-  if (originalListTools) {
-    mcpServer.listTools = function() {
-      const result = originalListTools();
-      // Adicionar descrições ao resultado
-      if (result && result.tools) {
-        result.tools = result.tools.map(t => {
-          const fullTool = tools.find(tool => tool.name === t.name);
-          if (fullTool) {
-            return {
-              ...t,
-              description: fullTool.description
-            };
-          }
-          return t;
-        });
-      }
-      return result;
-    };
-  }
-
-  // Alternativa: Interceptar o método _handleRequest se existir
-  if (mcpServer._handleRequest) {
-    const original = mcpServer._handleRequest.bind(mcpServer);
-    
-    mcpServer._handleRequest = async function(request) {
-      if (request.method === "tools/list") {
-        console.log("📋 Interceptando tools/list para adicionar descrições!");
+  if (mcpServer.tools && mcpServer.tools instanceof Map) {
+    tools.forEach(tool => {
+      const stored = mcpServer.tools.get(tool.name);
+      if (stored) {
+        console.log(`  Modificando ${tool.name}...`);
         
-        return {
-          tools: tools.map(tool => ({
+        // Tentar adicionar description de várias formas
+        if (stored.definition) {
+          stored.definition.description = tool.description;
+        } else if (stored.schema) {
+          stored.schema.description = tool.description;
+        } else {
+          stored.description = tool.description;
+        }
+        
+        // Também tentar criar uma nova estrutura
+        mcpServer.tools.set(tool.name, {
+          ...stored,
+          definition: {
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema
-          }))
-        };
+          }
+        });
       }
-      
-      return original(request);
-    };
+    });
   }
 
   console.log("\n✅ Servidor configurado!");
