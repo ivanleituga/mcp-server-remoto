@@ -8,15 +8,19 @@ function createMcpServer(queryFunction) {
     version: "1.0.0",
   });
 
-  // Registrar as ferramentas
+  // Registrar as ferramentas CORRETAMENTE
   console.log(`📦 Registrando ${tools.length} ferramentas...`);
   
   tools.forEach(tool => {
     console.log(`  - ${tool.name}`);
     
+    // FORMA CORRETA: Passar o objeto completo de definição!
     mcpServer.tool(
-      tool.name,
-      tool.inputSchema.properties || {},
+      {
+        name: tool.name,
+        description: tool.description,      // ← Agora a descrição VAI ser usada!
+        inputSchema: tool.inputSchema       // ← Schema completo, não só properties!
+      },
       async (params) => {
         console.log(`\n🔧 Executando: ${tool.name}`);
         console.log("   Params:", JSON.stringify(params, null, 2));
@@ -33,6 +37,8 @@ function createMcpServer(queryFunction) {
     );
   });
 
+  console.log("\n✅ Ferramentas registradas com descrições completas!");
+  
   return mcpServer;
 }
 
