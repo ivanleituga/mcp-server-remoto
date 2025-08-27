@@ -44,14 +44,10 @@ const tools = [
   },
   {
     name: "generate_lithological_profile",
-    description: `Generates a lithological profile visualization for a specific well. 
-    This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
-    DO NOT query the database first - this tool handles everything internally.
-    The tool identifies the requested well name and sends it to the API which returns an HTML with the chart. 
-    IMPORTANT: The assistant must ALWAYS automatically create an artifact of type 'text/html' 
-    with the HTML content returned by the API, allowing direct rendered visualization in the interface.
-    IMPORTANT: Create the artifact with the HTML content EXACTLY as returned by the API,
-    without adding, removing, or modifying ANYTHING.`,
+    description: `Generates a link to view the lithological profile visualization for a specific well. 
+    This tool should be used when the user asks for a "lithological profile" or "perfil litológico" of a well.
+    The tool returns a direct link to the API that the user can click to view the profile externally.
+    The visualization will open in the user's browser showing the lithological profile chart.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -116,7 +112,7 @@ async function executeTool(toolName, args = {}, queryFn) {
     }
       
     case "generate_lithological_profile": {
-      console.log("   🎨 Gerando perfil litológico");
+      console.log("   🎨 Gerando link para perfil litológico");
         
       const wellName = args.wellName;
         
@@ -126,36 +122,23 @@ async function executeTool(toolName, args = {}, queryFn) {
         
       console.log("   Poço:", wellName);
         
-      try {
-        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
-        console.log("   Fazendo request para:", url);
-          
-        const response = await fetch(url, {
-          headers: { "Accept": "text/html" },
-          signal: AbortSignal.timeout(30000)
-        });
-          
-        if (!response.ok) {
-          throw new Error(`API retornou erro: ${response.status}`);
-        }
-          
-        const html = await response.text();
-        console.log("   ✅ HTML recebido:", html.length, "caracteres");
-          
-        return { 
-          content: [{ type: "text", text: html }],
-          isError: false
-        };
-      } catch (err) {
-        console.error("   ❌ Erro ao gerar perfil:", err.message);
-        return { 
-          content: [{ 
-            type: "text", 
-            text: `Erro ao gerar perfil: ${err.message}` 
-          }],
-          isError: true
-        };
-      }
+      // Gerar o link direto para a API
+      const apiUrl = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
+      
+      console.log("   ✅ Link gerado:", apiUrl);
+      
+      // Retornar uma mensagem amigável com o link
+      const message = `🔗 **Perfil Litológico do Poço ${wellName}**
+
+      Clique no link abaixo para visualizar o perfil litológico:
+      ${apiUrl}
+
+      ⚠️ **Nota:** O perfil será aberto em uma nova janela do navegador com a visualização completa do gráfico.`;
+      
+      return { 
+        content: [{ type: "text", text: message }],
+        isError: false
+      };
     }
       
     default:
