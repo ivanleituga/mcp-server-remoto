@@ -4,7 +4,10 @@
   "description": "MCP Server for Well Database",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "build": "echo 'No build step, just packaging'",
+    "lint": "eslint . --ext .js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.2",

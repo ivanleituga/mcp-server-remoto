@@ -162,6 +162,11 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
             <br>
             <small>Generate lithological profile visualization for a specific well</small>
           </div>
+          <div class="tool">
+            <strong>simple_image_test</strong>
+            <br>
+            <small>Generate a simple image test</small>
+          </div>
         </div>
 
         <div class="instructions">
