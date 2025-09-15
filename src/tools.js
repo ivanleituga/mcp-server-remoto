@@ -44,14 +44,10 @@ const tools = [
   },
   {
     name: "generate_lithological_profile",
-    description: `Generates a lithological profile visualization for a specific well. 
-    This tool should be used DIRECTLY when the user asks for a "lithological profile" or "perfil litológico" of a well.
-    DO NOT query the database first - this tool handles everything internally.
-    The tool identifies the requested well name and sends it to the API which returns an HTML with the chart. 
-    IMPORTANT: The assistant must ALWAYS automatically create an artifact of type 'text/html' 
-    with the HTML content returned by the API, allowing direct rendered visualization in the interface.
-    IMPORTANT: Create the artifact with the HTML content EXACTLY as returned by the API,
-    without adding, removing, or modifying ANYTHING.`,
+    description: `Generates a link to view the lithological profile visualization for a specific well. 
+    This tool should be used when the user asks for a "lithological profile" or "perfil litológico" of a well.
+    The tool returns a direct link to the API that the user can click to view the profile externally.
+    The visualization will open in the user's browser showing the lithological profile chart.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -64,15 +60,50 @@ const tools = [
     }
   },
   {
-    name: "simple_image_test",
-    description: `Tool de teste que retorna uma imagem em base64.
-      
-      Esta é uma ferramenta de desenvolvimento para testar como o Claude
-      exibe imagens retornadas pelas tools do MCP.`,
+    name: "get_well_curves",
+    description: `Retrieves available curves for a specific well.
+    Use this tool to check which curves (GR, RHOB, NPHI, etc.) are available for a well before generating a composite profile link.
+    This tool should be called BEFORE generate_composite_profile_link to ensure the selected curves exist for the well.`,
     inputSchema: {
       type: "object",
-      properties: {},
-      required: []
+      properties: {
+        wellName: {
+          type: "string",
+          description: "ONLY the well name (e.g., 1-SL-1-RN, 2-RJ-3-BA)"
+        }
+      },
+      required: ["wellName"]
+    }
+  },
+  {
+    name: "generate_composite_profile_link",
+    description: `Generates a link to the Composite Profile Viewer application for a specific well with selected curves.
+    Use this tool when the user wants to visualize a composite profile with specific curves.
+    Maximum 3 curves can be selected at once (minimum 1 curve).
+    Important: Call get_well_curves first to verify which curves are available for the well.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        wellName: {
+          type: "string",
+          description: "The well name/ID (e.g., 1-SL-1-RN)"
+        },
+        curves: {
+          type: "array",
+          description: "Array of curve names to display (max 3). Common curves: GR, RHOB, NPHI, DT, ILD, SP, CALI",
+          items: {
+            type: "string"
+          },
+          maxItems: 3,
+          minItems: 1
+        },
+        includeLithology: {
+          type: "boolean",
+          description: "Whether to include lithology column in the profile (default: true)",
+          default: true
+        }
+      },
+      required: ["wellName", "curves"]
     }
   }
 ];
@@ -127,32 +158,107 @@ async function executeTool(toolName, args = {}, queryFn) {
       }
     }
       
-    case "generate_lithological_profile":
-      try {
-        const url = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(args.wellName)}`;
-        const response = await fetch(url, {
-          headers: { "Accept": "text/html" },
-          signal: AbortSignal.timeout(30000)
-        });
-          
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-          
-        const html = await response.text();
-        return { content: [{ type: "text", text: html }] };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err.message}` }] };
+    case "generate_lithological_profile": {
+      console.log("   🎨 Gerando link para perfil litológico");
+        
+      const wellName = args.wellName;
+        
+      if (!wellName) {
+        throw new Error("Nome do poço não fornecido");
+      }
+        
+      console.log("   Poço:", wellName);
+        
+      // Gerar o link direto para a API
+      const apiUrl = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
+      
+      console.log("   ✅ Link gerado:", apiUrl);
+      
+      // Retornar uma mensagem amigável com o link
+      const message = `🔗 **Perfil Litológico do Poço ${wellName}**
+
+      Clique no link abaixo para visualizar o perfil litológico:
+      ${apiUrl}
+
+      ⚠️ **Nota:** O perfil será aberto em uma nova janela do navegador com a visualização completa do gráfico.`;
+      
+      return { 
+        content: [{ type: "text", text: message }],
+        isError: false
+      };
+    }
+
+    case "get_well_curves": {
+      console.log("   🔍 Buscando curvas disponíveis para o poço");
+  
+      const wellName = args.wellName;
+  
+      if (!wellName) {
+        throw new Error("Nome do poço não fornecido");
       }
   
-    case "simple_image_test": {
-      // Quadrado azul 5x5 pixels - menor base64 possível
-      const tinyBlueSquare = "+/3O/OyBjzh3CD95BfqICMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMO0TAAD//2Anhf4QtqobAAAAAElFTkSuQmCC";
+      // Aqui seria uma query real no banco para buscar as curvas
+      // Por enquanto, dados mock
+      const mockCurves = {
+        "1-SL-1-RN": ["GR", "RHOB", "NPHI", "DT", "ILD", "SP", "CALI", "BS"],
+        "1-SL-2-RN": ["GR", "RHOB", "DT", "MSFL"],
+        "2-RJ-3-BA": ["GR", "RHOB", "NPHI"],
+        "4-MG-2-ES": ["GR", "NPHI", "ILD", "SP", "CALI", "PEF", "PHIT"],
+        "3-BRA-1-RJS": ["GR", "RHOB", "NPHI", "DT", "SP"],
+        "7-AB-45-SP": ["GR", "ILD", "MSFL", "CALI", "BS", "DRHO"],
+        "9-MR-8-RN": ["GR", "RHOB", "NPHI", "DT", "ILD", "ILM", "SFL"],
+        "1-RJS-628A": ["GR", "RHOB", "DT"]
+      };
+  
+      const curves = mockCurves[wellName] || [];
+  
+      const message = curves.length > 0 
+        ? `📊 **Curvas disponíveis para o poço ${wellName}:**\n\n${curves.join(", ")}\n\nVocê pode selecionar até 3 curvas para o perfil composto.`
+        : `⚠️ Nenhuma curva encontrada para o poço ${wellName}`;
   
       return {
-        content: [{
-          type: "image",
-          data: tinyBlueSquare,
-          mimeType: "image/png"
-        }],
+        content: [{ type: "text", text: message }],
+        isError: false
+      };
+    }
+
+    case "generate_composite_profile_link": {
+      console.log("   🎨 Gerando link para perfil composto");
+  
+      const { wellName, curves, includeLithology = true } = args;
+  
+      if (!wellName || !curves || curves.length === 0) {
+        throw new Error("Nome do poço e curvas são obrigatórios");
+      }
+  
+      if (curves.length > 3) {
+        throw new Error("Máximo de 3 curvas permitidas");
+      }
+  
+      // Construir URL com parâmetros
+      const baseUrl = "http://localhost:3001"; // Ou sua URL de produção
+      const params = new URLSearchParams({
+        well: wellName,
+        curves: curves.join(","),
+        lito: includeLithology.toString()
+      });
+  
+      const fullUrl = `${baseUrl}/?${params.toString()}`;
+  
+      console.log("   ✅ Link gerado:", fullUrl);
+  
+      const message = `🔗 **Perfil Composto do Poço ${wellName}**
+
+      Curvas selecionadas: ${curves.join(", ")}
+      Litologia: ${includeLithology ? "Incluída" : "Não incluída"}
+
+      Clique no link abaixo para visualizar o perfil composto:
+      ${fullUrl}
+
+      ⚡ **Nota:** O perfil será gerado automaticamente ao abrir o link.`;
+  
+      return {
+        content: [{ type: "text", text: message }],
         isError: false
       };
     }
