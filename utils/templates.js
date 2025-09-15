@@ -163,9 +163,14 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
             <small>Generate lithological profile visualization for a specific well</small>
           </div>
           <div class="tool">
-            <strong>simple_image_test</strong>
+            <strong>get_well_curves</strong>
             <br>
-            <small>Generate a simple image test</small>
+            <small>List all curves available for a specific well</small>
+          </div>
+          <div class="tool">
+            <strong>generate_composite_profile_link</strong>
+            <br>
+            <small>Generate a link to the Composite Profile Viewer for a specific well</small>
           </div>
         </div>
 
