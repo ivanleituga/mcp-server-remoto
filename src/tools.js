@@ -125,7 +125,6 @@ async function executeTool(toolName, args = {}, queryFn) {
     case "query_well_database": {
       console.log("   🔍 Executando query_well_database");
         
-      // O SDK já passa os argumentos desempacotados
       const sql = args.sql;
         
       console.log("   SQL extraído:", sql);
@@ -169,12 +168,10 @@ async function executeTool(toolName, args = {}, queryFn) {
         
       console.log("   Poço:", wellName);
         
-      // Gerar o link direto para a API
       const apiUrl = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
       
       console.log("   ✅ Link gerado:", apiUrl);
       
-      // Retornar uma mensagem amigável com o link
       const message = `🔗 **Perfil Litológico do Poço ${wellName}**
 
       Clique no link abaixo para visualizar o perfil litológico:
@@ -197,29 +194,31 @@ async function executeTool(toolName, args = {}, queryFn) {
         throw new Error("Nome do poço não fornecido");
       }
   
-      // Aqui seria uma query real no banco para buscar as curvas
-      // Por enquanto, dados mock
-      const mockCurves = {
-        "1-SL-1-RN": ["GR", "RHOB", "NPHI", "DT", "ILD", "SP", "CALI", "BS"],
-        "1-SL-2-RN": ["GR", "RHOB", "DT", "MSFL"],
-        "2-RJ-3-BA": ["GR", "RHOB", "NPHI"],
-        "4-MG-2-ES": ["GR", "NPHI", "ILD", "SP", "CALI", "PEF", "PHIT"],
-        "3-BRA-1-RJS": ["GR", "RHOB", "NPHI", "DT", "SP"],
-        "7-AB-45-SP": ["GR", "ILD", "MSFL", "CALI", "BS", "DRHO"],
-        "9-MR-8-RN": ["GR", "RHOB", "NPHI", "DT", "ILD", "ILM", "SFL"],
-        "1-RJS-628A": ["GR", "RHOB", "DT"]
-      };
-  
-      const curves = mockCurves[wellName] || [];
-  
-      const message = curves.length > 0 
-        ? `📊 **Curvas disponíveis para o poço ${wellName}:**\n\n${curves.join(", ")}\n\nVocê pode selecionar até 3 curvas para o perfil composto.`
-        : `⚠️ Nenhuma curva encontrada para o poço ${wellName}`;
-  
-      return {
-        content: [{ type: "text", text: message }],
-        isError: false
-      };
+      try {
+        // Chamar API real para buscar curvas
+        const response = await fetch(`http://swk2adm1-001.k2sistemas.com.br:9095/curves?well=${wellName}`);
+        
+        if (!response.ok) {
+          throw new Error(`API retornou erro: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        const message = data.count > 0 
+          ? `📊 **Curvas disponíveis para o poço ${wellName}:**\n\n${data.curves.join(", ")}\n\nVocê pode selecionar até 3 curvas para o perfil composto.`
+          : `⚠️ Nenhuma curva encontrada para o poço ${wellName}`;
+    
+        return {
+          content: [{ type: "text", text: message }],
+          isError: false
+        };
+      } catch (error) {
+        console.error("   ❌ Erro ao buscar curvas:", error.message);
+        return {
+          content: [{ type: "text", text: `Erro ao buscar curvas: ${error.message}` }],
+          isError: true
+        };
+      }
     }
 
     case "generate_composite_profile_link": {
@@ -235,8 +234,9 @@ async function executeTool(toolName, args = {}, queryFn) {
         throw new Error("Máximo de 3 curvas permitidas");
       }
   
-      // Construir URL com parâmetros
-      const baseUrl = "http://localhost:3001"; // Ou sua URL de produção
+      // URL de produção ou localhost conforme ambiente
+      const baseUrl = "http://localhost:3001";
+      
       const params = new URLSearchParams({
         well: wellName,
         curves: curves.join(","),

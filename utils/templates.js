@@ -165,7 +165,7 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
           <div class="tool">
             <strong>get_well_curves</strong>
             <br>
-            <small>List all curves available for a specific well</small>
+            <small>List all available curves for a specific well</small>
           </div>
           <div class="tool">
             <strong>generate_composite_profile_link</strong>
