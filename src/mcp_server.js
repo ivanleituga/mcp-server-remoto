@@ -6,6 +6,16 @@ function createMcpServer(queryFunction) {
   const server = new Server({
     name: "mcp-well-database",
     version: "1.0.0",
+    description: `MCP Server for Well Database and Profile Visualization.
+    
+    - For profile visualization requests, DO NOT query the database unless specifically needed
+    - Only fetch schema when you need to write SQL queries
+    
+    WORKFLOW EXAMPLES:
+    - User asks for composite profile: get_well_curves → generate_composite_profile_link
+    - User asks for well data: fetch_schema → query_database
+    - User asks for lithological profile: generate_lithological_profile directly
+    `
   }, {
     capabilities: {
       tools: {}

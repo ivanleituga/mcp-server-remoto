@@ -63,7 +63,7 @@ const tools = [
   {
     name: "get_well_curves",
     description: `Retrieves available curves for a specific well.
-    Use this tool to check which curves (GR, RHOB, NPHI, etc.) are available for a well before generating a composite profile link.
+    Use this tool to check which curves are available for a well before generating a composite profile link.
     This tool should be called BEFORE generate_composite_profile_link to ensure the selected curves exist for the well.`,
     inputSchema: {
       type: "object",
@@ -81,7 +81,9 @@ const tools = [
     description: `Generates a link to the Composite Profile Viewer application for a specific well with selected curves.
     Use this tool when the user wants to visualize a composite profile with specific curves.
     Maximum 3 curves can be selected at once (minimum 1 curve).
-    Important: Call get_well_curves first to verify which curves are available for the well.`,
+    Important: Call get_well_curves first to verify which curves are available for the well.
+    CRITICAL: Use the EXACT curve names as returned by get_well_curves tool - do not abbreviate or translate them.
+    NOTE: This tool does NOT require fetching database schema or querying well information - it only needs the well name and curve names.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -91,7 +93,7 @@ const tools = [
         },
         curves: {
           type: "array",
-          description: "Array of curve names to display (max 3). Common curves: GR, RHOB, NPHI, DT, ILD, SP, CALI",
+          description: "Array of curve names to display (max 3). Must use EXACT names as returned by get_well_curves (e.g., 'Raios gama', 'Potencial espontâneo', 'Sônico', 'Caliper') - DO NOT use abbreviations like GR, SP, DT, CALI",
           items: {
             type: "string"
           },
