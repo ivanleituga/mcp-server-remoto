@@ -6,6 +6,7 @@ const tools = [
     description: `Returns the full and authoritative schema of the well/basin database.
     
     Usage:
+    - Only fetch the schema when you need to write SQL queries to search for specific data in the database tables.
     - This tool must always be called before using the 'query_well_database' tool.
     - The returned schema should be treated as the only valid source of table and column names.
     - Do not assume or infer any additional structures not explicitly listed here.
