@@ -1,7 +1,7 @@
 pipeline {
   agent { label("${params.AGENT_LABEL}") }
   options { timestamps(); disableConcurrentBuilds(abortPrevious: true); }
-  triggers { pollSCM('H/1 * * * *') }
+  triggers { pollSCM('H/5 * * * *') }
   
   environment {
     AGENT_LABEL           = "${params.AGENT_LABEL}"

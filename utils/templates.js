@@ -158,11 +158,6 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
             <small>Execute SQL queries on the well and basin database</small>
           </div>
           <div class="tool">
-            <strong>generate_lithological_profile</strong>
-            <br>
-            <small>Generate lithological profile visualization for a specific well</small>
-          </div>
-          <div class="tool">
             <strong>get_well_curves</strong>
             <br>
             <small>List all available curves for a specific well</small>

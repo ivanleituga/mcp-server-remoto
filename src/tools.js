@@ -44,23 +44,6 @@ const tools = [
     }
   },
   {
-    name: "generate_lithological_profile",
-    description: `Generates a link to view the lithological profile visualization for a specific well. 
-    This tool should be used when the user asks for a "lithological profile" or "perfil litológico" of a well.
-    The tool returns a direct link to the API that the user can click to view the profile externally.
-    The visualization will open in the user's browser showing the lithological profile chart.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        wellName: {
-          type: "string",
-          description: "ONLY the well name (e.g., 2-AA-2-SP, 1-BAR-2-AL, 3-BRSA-123-RJS, etc)"
-        }
-      },
-      required: ["wellName"]
-    }
-  },
-  {
     name: "get_well_curves",
     description: `Retrieves available curves for a specific well.
     Use this tool to check which curves are available for a well before generating a composite profile link.
@@ -159,34 +142,6 @@ async function executeTool(toolName, args = {}, queryFn) {
         };
       }
     }
-      
-    case "generate_lithological_profile": {
-      console.log("   🎨 Gerando link para perfil litológico");
-        
-      const wellName = args.wellName;
-        
-      if (!wellName) {
-        throw new Error("Nome do poço não fornecido");
-      }
-        
-      console.log("   Poço:", wellName);
-        
-      const apiUrl = `http://swk2adm1-001.k2sistemas.com.br/k2sigaweb/api/PerfisPocos/Perfis?nomePoco=${encodeURIComponent(wellName)}`;
-      
-      console.log("   ✅ Link gerado:", apiUrl);
-      
-      const message = `🔗 **Perfil Litológico do Poço ${wellName}**
-
-      Clique no link abaixo para visualizar o perfil litológico:
-      ${apiUrl}
-
-      ⚠️ **Nota:** O perfil será aberto em uma nova janela do navegador com a visualização completa do gráfico.`;
-      
-      return { 
-        content: [{ type: "text", text: message }],
-        isError: false
-      };
-    }
 
     case "get_well_curves": {
       console.log("   🔍 Buscando curvas disponíveis para o poço");
@@ -238,7 +193,7 @@ async function executeTool(toolName, args = {}, queryFn) {
       }
   
       // URL de produção ou localhost conforme ambiente
-      const baseUrl = "http://localhost:3001";
+      const baseUrl = "https://curves.k2sistemas.com.br/";
       
       const params = new URLSearchParams({
         well: wellName,
