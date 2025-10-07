@@ -9,12 +9,12 @@ function createMcpServer(queryFunction) {
     description: `MCP Server for Well Database and Profile Visualization.
     
     - For profile visualization requests, DO NOT query the database unless specifically needed
-    - Only fetch schema when you need to write SQL queries
+    - Only fetch schema once in a conversation
     
     WORKFLOW EXAMPLES:
     - User asks for composite profile: get_well_curves → generate_composite_profile_link
     - User asks for well data: fetch_schema → query_database
-    - User asks for lithological profile: generate_lithological_profile directly
+    - User asks for curve analysis: fetch_schema → query_database (dlis_metadata_view) → get_dlis_data
     `
   }, {
     capabilities: {

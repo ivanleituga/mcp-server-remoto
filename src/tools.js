@@ -91,6 +91,51 @@ const tools = [
       },
       required: ["wellName", "curves"]
     }
+  },
+  {
+    name: "get_dlis_metadata",
+    description: `Retrieves DLIS metadata and curve data for specific well measurements.
+    
+    This tool fetches detailed curve data from DLIS files for a specific well, including depth-value pairs.
+    Use this when you need to analyze specific curves like gamma rays, resistivity, or time measurements.
+    
+    Important:
+    - You must know the exact run, frame, and curve names (use the dlis_metadata_view table to find these)
+    - Each item in the request represents a specific curve to retrieve
+    - The response includes both metadata and actual measurement points`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        wellName: {
+          type: "string",
+          description: "Well name exactly as it appears in the database (e.g., '1-COST-1P-PR')"
+        },
+        items: {
+          type: "array",
+          description: "Array of curve specifications to retrieve. Each must have run, frame, and curve.",
+          items: {
+            type: "object",
+            properties: {
+              run: {
+                type: "string",
+                description: "Run identifier (e.g., '1cost1ppr_mdt_101PUP')"
+              },
+              frame: {
+                type: "string",
+                description: "Frame identifier (e.g., '35:0:'60B'')"
+              },
+              curve: {
+                type: "string",
+                description: "Curve name (e.g., 'Raios gama', 'Tempo')"
+              }
+            },
+            required: ["run", "frame", "curve"]
+          },
+          minItems: 1
+        }
+      },
+      required: ["wellName", "items"]
+    }
   }
 ];
 
@@ -219,6 +264,66 @@ async function executeTool(toolName, args = {}, queryFn) {
         content: [{ type: "text", text: message }],
         isError: false
       };
+    }
+
+    case "get_dlis_metadata": {
+      console.log("   📊 Buscando metadados DLIS");
+  
+      const { wellName, items } = args;
+  
+      if (!wellName || !items || items.length === 0) {
+        throw new Error("Nome do poço e itens são obrigatórios");
+      }
+
+      // Validar estrutura dos itens
+      for (const item of items) {
+        if (!item.run || !item.frame || !item.curve) {
+          throw new Error("Cada item deve ter run, frame e curve");
+        }
+      }
+  
+      try {
+        console.log("   📡 Fazendo POST para API DLIS...");
+        
+        const requestBody = {
+          well: wellName,
+          items: items
+        };
+        
+        console.log("   Request body:", JSON.stringify(requestBody, null, 2));
+        
+        const response = await fetch("http://swk2adm1-001.k2sistemas.com.br:9095/dlis/data/by-keys", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`API retornou erro ${response.status}: ${errorText}`);
+        }
+        
+        const data = await response.json();
+        
+        console.log("   ✅ Metadados recebidos");
+        
+        // Retornar dados brutos para o Claude interpretar
+        return {
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify(data, null, 2) 
+          }],
+          isError: false
+        };
+      } catch (error) {
+        console.error("   ❌ Erro ao buscar metadados DLIS:", error.message);
+        return {
+          content: [{ type: "text", text: `Erro ao buscar metadados DLIS: ${error.message}` }],
+          isError: true
+        };
+      }
     }
       
     default:

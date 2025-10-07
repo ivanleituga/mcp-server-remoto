@@ -13,26 +13,6 @@ CREATE TABLE formationtestschartdata_view (
   "Tempo" REAL
 );
 
--- Tabela contendo os dados das curvas dos poços, retirados dos arquivos DLIS 
-CREATE TABLE dlis_metadata_view (
-  "id" INT,
-  "Poço" TEXT,
-  "Corrida" TEXT,
-  "Data de Criação da Corrida" TIMESTAMP,
-  "frame" TEXT,
-  "Espaçamento" DOUBLE,
-  "Unidade de Espaçamento" TEXT,
-  "Indice Minimo" DOUBLE,
-  "Unidade Indice Minimo" TEXT,
-  "Indice Maximo" DOUBLE,
-  "Unidade Indice Maximo" TEXT,
-  "curva" TEXT,
-  "Nome Semantico da Curva" TEXT,
-  "categoria" TEXT,
-  "Url de Download" TEXT,
-  "Arquivo HDF5" TEXT
-);
-
 -- Tabela contendo informações sobre a recuperação na coluna dos testes de formação
 CREATE TABLE formationtestscolumnrecovery_view (
   "ID" INT,
@@ -787,6 +767,27 @@ CREATE TABLE wellfiles_view (
   "Extensão do Arquivo" TEXT,
   "Caminho do Arquivo" TEXT,
   "URL de Download" TEXT
+);
+
+-- Tabela contendo os dados das curvas dos poços, retirados dos arquivos DLIS 
+CREATE TABLE dlis_metadata_view (
+  "ID" INT,
+  "Poço" TEXT,
+  "Bacia" TEXT,
+  "Corrida" TEXT,
+  "Data de Criação da Corrida" TIMESTAMP,
+  "Frame" TEXT,
+  "Espaçamento" DOUBLE,
+  "Unidade de Espaçamento" TEXT,
+  "Indice Minimo" DOUBLE,
+  "Unidade Indice Minimo" TEXT,
+  "Indice Maximo" DOUBLE,
+  "Unidade Indice Maximo" TEXT,
+  "Curva" TEXT,
+  "Nome Semantico da Curva" TEXT,
+  "Categoria" TEXT,
+  "Url de Download" TEXT,
+  "Arquivo HDF5" TEXT
 );
 `;
 

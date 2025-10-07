@@ -167,6 +167,11 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
             <br>
             <small>Generate a link to the Composite Profile Viewer for a specific well</small>
           </div>
+          <div class="tool">
+            <strong>get_dlis_data</strong>
+            <br>
+            <small>Retrieve DLIS metadata and curve measurements for specific wells</small>
+          </div>
         </div>
 
         <div class="instructions">
