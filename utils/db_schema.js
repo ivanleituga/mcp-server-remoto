@@ -783,8 +783,8 @@ CREATE TABLE dlis_metadata_view (
   "Unidade Indice Minimo" TEXT,
   "Indice Maximo" DOUBLE,
   "Unidade Indice Maximo" TEXT,
-  "Curva" TEXT,
-  "Nome Semantico da Curva" TEXT,
+  "Código da Curva" TEXT,
+  "Nome da Curva" TEXT,
   "Categoria" TEXT,
   "Url de Download" TEXT,
   "Arquivo HDF5" TEXT
