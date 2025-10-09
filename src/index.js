@@ -9,6 +9,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const cookieParser = require("cookie-parser");
 
 // ===============================================
 // CONFIGURAÇÃO
@@ -29,6 +30,7 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
+app.use(cookieParser());
 
 // Log de todas as requisições
 app.use((req, res, next) => {
