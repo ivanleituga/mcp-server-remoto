@@ -1,15 +1,16 @@
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { getAuthorizePage, getDocsPage, getLoginPage } = require("../utils/templates");
+const { validateUser } = require("./db_auth");  // ← NOVA IMPORTAÇÃO
 
 // ===============================================
-// ARMAZENAMENTO EM MEMÓRIA
+// ARMAZENAMENTO EM MEMÓRIA (sem mudanças ainda)
 // ===============================================
 const storage = {
-  clients: new Map(),     // client_id -> client info
-  authCodes: new Map(),   // code -> auth info
-  tokens: new Map(),      // token -> token info
-  sessions: new Map()     // session_id -> session info
+  clients: new Map(),
+  authCodes: new Map(),
+  tokens: new Map(),
+  sessions: new Map()
 };
 
 // ===============================================
@@ -17,82 +18,16 @@ const storage = {
 // ===============================================
 const config = {
   SERVER_URL: process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`,
-  TOKEN_EXPIRY: 3600000,    // 1 hora em ms
-  CODE_EXPIRY: 600000,      // 10 minutos em ms
-  SESSION_EXPIRY: 3600000,  // 1 hora em ms
-  AUTO_APPROVE: false       // OAuth real ativado!
+  TOKEN_EXPIRY: 3600000,
+  CODE_EXPIRY: 600000,
+  SESSION_EXPIRY: 3600000,
+  AUTO_APPROVE: false
 };
 
 // ===============================================
-// FUNÇÃO HELPER: Imprimir estado do storage
-// ===============================================
-function logStorageState(label = "STORAGE STATE") {
-  console.log(`\n${"=".repeat(60)}`);
-  console.log(`📦 ${label}`);
-  console.log("=".repeat(60));
-  
-  console.log("\n👥 CLIENTS:");
-  if (storage.clients.size === 0) {
-    console.log("   (vazio)");
-  } else {
-    for (const [clientId, client] of storage.clients) {
-      console.log(`   • ${clientId}`);
-      console.log(`     Nome: ${client.client_name}`);
-      console.log(`     Redirect URIs: ${client.redirect_uris.join(", ")}`);
-      console.log(`     Criado em: ${new Date(client.created_at).toISOString()}`);
-    }
-  }
-  
-  console.log("\n🎫 AUTH CODES:");
-  if (storage.authCodes.size === 0) {
-    console.log("   (vazio)");
-  } else {
-    for (const [code, data] of storage.authCodes) {
-      const expiresIn = Math.max(0, data.expiresAt - Date.now());
-      console.log(`   • ${code}`);
-      console.log(`     Client: ${data.client_id}`);
-      console.log(`     User: ${data.user}`);
-      console.log(`     Expira em: ${Math.floor(expiresIn / 1000)}s`);
-    }
-  }
-  
-  console.log("\n🔑 TOKENS:");
-  if (storage.tokens.size === 0) {
-    console.log("   (vazio)");
-  } else {
-    for (const [token, data] of storage.tokens) {
-      const shortToken = token.substring(0, 20) + "...";
-      const expiresIn = data.expiresAt ? Math.max(0, data.expiresAt - Date.now()) : "∞";
-      console.log(`   • ${shortToken}`);
-      console.log(`     Tipo: ${data.type || "access"}`);
-      console.log(`     User: ${data.user}`);
-      console.log(`     Client: ${data.client_id}`);
-      console.log(`     Expira em: ${expiresIn === "∞" ? "nunca" : Math.floor(expiresIn / 1000) + "s"}`);
-    }
-  }
-  
-  console.log("\n🍪 SESSIONS:");
-  if (storage.sessions.size === 0) {
-    console.log("   (vazio)");
-  } else {
-    for (const [sessionId, session] of storage.sessions) {
-      const shortSession = sessionId.substring(0, 20) + "...";
-      const expiresIn = Math.max(0, session.expiresAt - Date.now());
-      console.log(`   • ${shortSession}`);
-      console.log(`     User: ${session.user}`);
-      console.log(`     Criado: ${new Date(session.createdAt).toLocaleTimeString()}`);
-      console.log(`     Expira em: ${Math.floor(expiresIn / 1000)}s`);
-    }
-  }
-  
-  console.log("\n" + "=".repeat(60) + "\n");
-}
-
-// ===============================================
-// FUNÇÕES AUXILIARES
+// FUNÇÕES AUXILIARES (sem mudanças)
 // ===============================================
 
-// Gerar código PKCE challenge
 function generateCodeChallenge(verifier) {
   return crypto
     .createHash("sha256")
@@ -100,19 +35,16 @@ function generateCodeChallenge(verifier) {
     .digest("base64url");
 }
 
-// Validar PKCE
 function validatePKCE(codeVerifier, codeChallenge, method = "S256") {
   if (method === "S256") {
     return generateCodeChallenge(codeVerifier) === codeChallenge;
   }
-  return codeVerifier === codeChallenge; // plain
+  return codeVerifier === codeChallenge;
 }
 
-// Limpar itens expirados
 function cleanupExpired() {
   const now = Date.now();
   
-  // Limpar códigos expirados
   for (const [code, data] of storage.authCodes) {
     if (now > data.expiresAt) {
       storage.authCodes.delete(code);
@@ -120,7 +52,6 @@ function cleanupExpired() {
     }
   }
   
-  // Limpar tokens expirados
   for (const [token, data] of storage.tokens) {
     if (data.expiresAt && now > data.expiresAt) {
       storage.tokens.delete(token);
@@ -128,7 +59,6 @@ function cleanupExpired() {
     }
   }
   
-  // Limpar sessões expiradas
   for (const [sessionId, data] of storage.sessions) {
     if (now > data.expiresAt) {
       storage.sessions.delete(sessionId);
@@ -137,14 +67,12 @@ function cleanupExpired() {
   }
 }
 
-// Executar limpeza a cada 5 minutos
 setInterval(cleanupExpired, 300000);
 
 // ===============================================
-// FUNÇÕES DE SESSÃO
+// FUNÇÕES DE SESSÃO (sem mudanças)
 // ===============================================
 
-// Criar nova sessão de usuário autenticado
 function createSession(username) {
   const sessionId = uuidv4();
   const session = {
@@ -159,7 +87,6 @@ function createSession(username) {
   return sessionId;
 }
 
-// Validar sessão existente
 function validateSession(sessionId) {
   if (!sessionId) {
     console.log("⚠️  Nenhum session_id fornecido");
@@ -173,7 +100,6 @@ function validateSession(sessionId) {
     return null;
   }
   
-  // Verificar se expirou
   if (Date.now() > session.expiresAt) {
     console.log(`❌ Sessão expirada: ${sessionId}`);
     storage.sessions.delete(sessionId);
@@ -185,46 +111,15 @@ function validateSession(sessionId) {
 }
 
 // ===============================================
-// VALIDAÇÃO DE USUÁRIOS
-// ===============================================
-
-function validateUser(username, password) {
-  console.log("\n🔐 Validando usuário...");
-  console.log(`   Username: ${username}`);
-  console.log(`   Password: ${password ? "[PRESENTE]" : "[AUSENTE]"}`);
-  
-  // Buscar senha no .env: OAUTH_USER_[username]
-  const envKey = `OAUTH_USER_${username}`;
-  const expectedPassword = process.env[envKey];
-  
-  console.log(`   Procurando variável: ${envKey}`);
-  console.log(`   Senha encontrada no .env: ${expectedPassword ? "SIM" : "NÃO"}`);
-  
-  if (!expectedPassword) {
-    console.log(`   ❌ Usuário "${username}" não encontrado no .env`);
-    return { valid: false, error: `Usuário "${username}" não cadastrado` };
-  }
-  
-  if (password !== expectedPassword) {
-    console.log(`   ❌ Senha incorreta para "${username}"`);
-    return { valid: false, error: "Senha incorreta" };
-  }
-  
-  console.log(`   ✅ Credenciais válidas para "${username}"!`);
-  return { valid: true, username: username };
-}
-
-// ===============================================
 // IMPLEMENTAÇÃO OAUTH
 // ===============================================
 
 function setupOAuthEndpoints(app) {
   
   // -----------------------------------------------
-  // 1. DISCOVERY ENDPOINTS
+  // DISCOVERY ENDPOINTS (sem mudanças)
   // -----------------------------------------------
   
-  // Authorization Server Metadata
   app.get("/.well-known/oauth-authorization-server", (req, res) => {
     console.log("📋 OAuth Discovery: Authorization Server");
     
@@ -243,7 +138,6 @@ function setupOAuthEndpoints(app) {
     });
   });
   
-  // Protected Resource Metadata
   app.get("/.well-known/oauth-protected-resource", (req, res) => {
     console.log("📋 OAuth Discovery: Protected Resource");
     
@@ -257,7 +151,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 2. CLIENT REGISTRATION
+  // CLIENT REGISTRATION (sem mudanças)
   // -----------------------------------------------
   
   app.post("/oauth/register", (req, res) => {
@@ -283,9 +177,6 @@ function setupOAuthEndpoints(app) {
     console.log(`   Name: ${client.client_name}`);
     console.log(`   Redirect URIs: ${client.redirect_uris.join(", ")}`);
     
-    // 🔥 LOG: Estado do storage após registrar cliente
-    logStorageState("APÓS REGISTRO DE CLIENTE");
-    
     res.json({
       client_id: clientId,
       client_secret: clientSecret,
@@ -299,20 +190,18 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 3. LOGIN FLOW
+  // LOGIN FLOW - AGORA COM BANCO DE DADOS
   // -----------------------------------------------
   
-  // GET /oauth/login - Exibir tela de login
   app.get("/oauth/login", (req, res) => {
     console.log("\n🔑 GET /oauth/login");
     console.log("   Query params:", JSON.stringify(req.query, null, 2));
     
-    // Renderizar página de login com parâmetros OAuth preservados
     res.send(getLoginPage(req.query));
   });
   
-  // POST /oauth/login - Processar login
-  app.post("/oauth/login", (req, res) => {
+  // POST /oauth/login - MUDANÇA AQUI: usa banco de dados
+  app.post("/oauth/login", async (req, res) => {
     console.log("\n🔑 POST /oauth/login");
     console.log("   Body keys:", Object.keys(req.body));
     
@@ -322,13 +211,12 @@ function setupOAuthEndpoints(app) {
     console.log(`   Password: ${password ? "[PRESENTE]" : "[AUSENTE]"}`);
     console.log(`   OAuth params: client_id=${client_id}`);
     
-    // 🔥 Validar usuário com novo sistema
-    const validation = validateUser(username, password);
+    // 🔥 MUDANÇA: validar usuário via banco de dados
+    const validation = await validateUser(username, password);
     
     if (!validation.valid) {
       console.log(`   ❌ Validação falhou: ${validation.error}`);
       
-      // Renderizar login novamente com erro
       return res.send(getLoginPage({
         ...req.body,
         error: validation.error
@@ -337,10 +225,9 @@ function setupOAuthEndpoints(app) {
     
     console.log(`   ✅ Login autorizado: ${validation.username}`);
     
-    // Criar sessão de usuário autenticado
+    // Criar sessão
     const sessionId = createSession(validation.username);
     
-    // Definir cookie de sessão seguro
     res.cookie("session_id", sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -350,10 +237,7 @@ function setupOAuthEndpoints(app) {
     
     console.log(`   🍪 Cookie session_id definido: ${sessionId.substring(0, 20)}...`);
     
-    // 🔥 LOG: Estado do storage após criar sessão
-    logStorageState("APÓS LOGIN BEM-SUCEDIDO");
-    
-    // Redirecionar para /oauth/authorize com os parâmetros preservados
+    // Redirecionar para authorize
     const authUrl = new URL(`${config.SERVER_URL}/oauth/authorize`);
     authUrl.searchParams.set("client_id", client_id);
     authUrl.searchParams.set("redirect_uri", redirect_uri);
@@ -369,7 +253,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 4. AUTHORIZATION ENDPOINT
+  // AUTHORIZATION ENDPOINT (sem mudanças)
   // -----------------------------------------------
   
   app.get("/oauth/authorize", (req, res) => {
@@ -390,26 +274,22 @@ function setupOAuthEndpoints(app) {
     console.log(`   Scope: ${scope}`);
     console.log(`   PKCE: ${code_challenge ? "Yes" : "No"}`);
   
-    // Validar cliente
     const client = storage.clients.get(client_id);
     if (!client) {
       console.log("   ❌ Cliente não encontrado:", client_id);
       return res.status(400).send("Invalid client_id");
     }
   
-    // Validar redirect_uri
     if (!client.redirect_uris.includes(redirect_uri)) {
       console.log("   ❌ Redirect URI inválido:", redirect_uri);
       return res.status(400).send("Invalid redirect_uri");
     }
   
-    // Validar response_type
     if (response_type !== "code") {
       console.log("   ❌ Response type inválido:", response_type);
       return res.status(400).send("Invalid response_type - only 'code' is supported");
     }
     
-    // Verificar sessão
     const sessionId = req.cookies?.session_id;
     console.log(`   🍪 Cookie session_id: ${sessionId ? sessionId.substring(0, 20) + "..." : "[AUSENTE]"}`);
     
@@ -418,7 +298,6 @@ function setupOAuthEndpoints(app) {
     if (!session) {
       console.log("   ❌ Sessão inválida ou ausente - redirecionando para login");
       
-      // Redirecionar para tela de login preservando parâmetros OAuth
       const loginUrl = new URL(`${config.SERVER_URL}/oauth/login`);
       loginUrl.searchParams.set("client_id", client_id);
       loginUrl.searchParams.set("redirect_uri", redirect_uri);
@@ -435,11 +314,10 @@ function setupOAuthEndpoints(app) {
     console.log(`   ✅ Usuário autenticado: ${session.user}`);
     console.log("   📄 Mostrando tela de aprovação...");
     
-    // Usuário está autenticado - mostrar tela de aprovação
     res.send(getAuthorizePage(client, req.query));
   });
   
-  // POST para processar aprovação/negação
+  // POST /oauth/authorize (sem mudanças)
   app.post("/oauth/authorize", (req, res) => {
     const {
       action,
@@ -455,7 +333,6 @@ function setupOAuthEndpoints(app) {
     console.log(`   Action: ${action}`);
     console.log(`   Client ID: ${client_id}`);
     
-    // Verificar sessão novamente
     const sessionId = req.cookies?.session_id;
     const session = validateSession(sessionId);
     
@@ -484,9 +361,6 @@ function setupOAuthEndpoints(app) {
       
       console.log(`   🎫 Código autorizado: ${authCode}`);
       
-      // 🔥 LOG: Estado do storage após aprovação
-      logStorageState("APÓS APROVAÇÃO (CÓDIGO GERADO)");
-      
       redirectUrl.searchParams.set("code", authCode);
     } else {
       console.log("   ❌ Usuário NEGOU autorização");
@@ -500,7 +374,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 5. TOKEN ENDPOINT
+  // TOKEN ENDPOINT (sem mudanças)
   // -----------------------------------------------
   
   app.post("/oauth/token", (req, res) => {
@@ -511,7 +385,6 @@ function setupOAuthEndpoints(app) {
     console.log(`   Client ID: ${client_id}`);
     
     if (grant_type === "authorization_code") {
-      // Trocar código por token
       const authData = storage.authCodes.get(code);
       
       if (!authData) {
@@ -522,7 +395,6 @@ function setupOAuthEndpoints(app) {
         });
       }
       
-      // Validar PKCE se necessário
       if (authData.code_challenge) {
         if (!code_verifier) {
           console.log("   ❌ PKCE verifier ausente");
@@ -549,7 +421,6 @@ function setupOAuthEndpoints(app) {
         console.log("   ✅ PKCE validado com sucesso");
       }
       
-      // Gerar tokens
       const accessToken = `mcp_${uuidv4()}`;
       const refreshToken = `refresh_${uuidv4()}`;
       
@@ -565,19 +436,15 @@ function setupOAuthEndpoints(app) {
       storage.tokens.set(refreshToken, {
         ...tokenData,
         type: "refresh",
-        expiresAt: null // Refresh tokens não expiram automaticamente
+        expiresAt: null
       });
       
-      // Remover código usado
       storage.authCodes.delete(code);
       
       console.log("   ✅ Tokens gerados:");
       console.log(`      Access: ${accessToken.substring(0, 20)}...`);
       console.log(`      Refresh: ${refreshToken.substring(0, 20)}...`);
       console.log(`      User: ${authData.user}`);
-      
-      // 🔥 LOG: Estado do storage após gerar tokens
-      logStorageState("APÓS GERAR TOKENS");
       
       res.json({
         access_token: accessToken,
@@ -588,7 +455,6 @@ function setupOAuthEndpoints(app) {
       });
       
     } else if (grant_type === "refresh_token") {
-      // Renovar access token
       const refreshData = storage.tokens.get(refresh_token);
       
       if (!refreshData || refreshData.type !== "refresh") {
@@ -629,7 +495,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 6. TOKEN REVOCATION
+  // TOKEN REVOCATION (sem mudanças)
   // -----------------------------------------------
   
   app.post("/oauth/revoke", (req, res) => {
@@ -641,9 +507,6 @@ function setupOAuthEndpoints(app) {
     if (storage.tokens.has(token)) {
       storage.tokens.delete(token);
       console.log("   ✅ Token revogado");
-      
-      // 🔥 LOG: Estado do storage após revogar token
-      logStorageState("APÓS REVOGAR TOKEN");
     } else {
       console.log("   ⚠️  Token não encontrado (já revogado ou inválido)");
     }
@@ -652,22 +515,19 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 7. MIDDLEWARE DE VALIDAÇÃO
+  // MIDDLEWARE DE VALIDAÇÃO (sem mudanças)
   // -----------------------------------------------
   
   function validateToken(req, res, next) {
-    // SEMPRE permitir initialize sem autenticação
     if (req.body?.method === "initialize") {
       console.log("🆓 Initialize request - bypass OAuth");
       return next();
     }
     
-    // SEMPRE permitir OPTIONS (CORS preflight)
     if (req.method === "OPTIONS") {
       return next();
     }
     
-    // Verificar header Authorization
     const authHeader = req.headers.authorization;
     
     if (!authHeader) {
@@ -678,7 +538,6 @@ function setupOAuthEndpoints(app) {
       });
     }
     
-    // Validar Bearer token
     if (authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
       const tokenData = storage.tokens.get(token);
@@ -691,7 +550,6 @@ function setupOAuthEndpoints(app) {
         });
       }
       
-      // Verificar expiração
       if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
         console.log("❌ Token expirado");
         storage.tokens.delete(token);
@@ -714,7 +572,7 @@ function setupOAuthEndpoints(app) {
   }
   
   // -----------------------------------------------
-  // 8. ENDPOINT DE STATUS
+  // STATUS & DEBUG ENDPOINTS (sem mudanças)
   // -----------------------------------------------
   
   app.get("/oauth/status", (req, res) => {
@@ -724,19 +582,14 @@ function setupOAuthEndpoints(app) {
       active_tokens: storage.tokens.size,
       active_sessions: storage.sessions.size,
       auto_approve: config.AUTO_APPROVE,
-      authentication: "enabled (multi-user)",
+      authentication: "enabled (database)",
       token_expiry: config.TOKEN_EXPIRY / 1000 + " seconds",
       session_expiry: config.SESSION_EXPIRY / 1000 + " seconds",
       server_url: config.SERVER_URL
     });
   });
   
-  // -----------------------------------------------
-  // 9. ENDPOINT DE DEBUG
-  // -----------------------------------------------
-  
   app.get("/debug/storage", (req, res) => {
-    // Retornar storage em formato JSON amigável
     const debug = {
       clients: Array.from(storage.clients.entries()).map(([id, data]) => ({
         id,
@@ -768,19 +621,11 @@ function setupOAuthEndpoints(app) {
     res.json(debug);
   });
   
-  // -----------------------------------------------
-  // 10. ENDPOINT DE DOCUMENTAÇÃO
-  // -----------------------------------------------
-  
   app.get("/docs", (req, res) => {
     res.send(getDocsPage(config));
   });
   
   return { validateToken };
 }
-
-// ===============================================
-// EXPORTS
-// ===============================================
 
 module.exports = { setupOAuthEndpoints };

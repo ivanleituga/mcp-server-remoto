@@ -57,10 +57,8 @@ class SessionManager {
     }
     
     if (cleaned > 0) {
-      console.log(`🧹 ${cleaned} sessões inativas removidas`);
+      console.log(`🧹 Limpeza de sessões MCP: ${cleaned} removidas, ${this.count()} restantes`);
     }
-    
-    console.log(`🧹 Sessões ativas: ${this.count()}`);
   }
 
   async closeAll() {
