@@ -20,14 +20,72 @@ const config = {
   TOKEN_EXPIRY: 3600000,    // 1 hora em ms
   CODE_EXPIRY: 600000,      // 10 minutos em ms
   SESSION_EXPIRY: 3600000,  // 1 hora em ms
-  AUTO_APPROVE: false,      // 🔥 DESATIVADO - agora usa fluxo real!
-  OAUTH_PASSWORD: process.env.OAUTH_PASSWORD || "SENHA_NAO_CONFIGURADA"
+  AUTO_APPROVE: false       // OAuth real ativado!
 };
 
-// Validação crítica: se não houver senha configurada, avisar no console
-if (config.OAUTH_PASSWORD === "SENHA_NAO_CONFIGURADA") {
-  console.warn("\n⚠️  ATENÇÃO: OAUTH_PASSWORD não configurada no .env!");
-  console.warn("⚠️  Configure OAUTH_PASSWORD para habilitar autenticação real.\n");
+// ===============================================
+// FUNÇÃO HELPER: Imprimir estado do storage
+// ===============================================
+function logStorageState(label = "STORAGE STATE") {
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`📦 ${label}`);
+  console.log("=".repeat(60));
+  
+  console.log("\n👥 CLIENTS:");
+  if (storage.clients.size === 0) {
+    console.log("   (vazio)");
+  } else {
+    for (const [clientId, client] of storage.clients) {
+      console.log(`   • ${clientId}`);
+      console.log(`     Nome: ${client.client_name}`);
+      console.log(`     Redirect URIs: ${client.redirect_uris.join(", ")}`);
+      console.log(`     Criado em: ${new Date(client.created_at).toISOString()}`);
+    }
+  }
+  
+  console.log("\n🎫 AUTH CODES:");
+  if (storage.authCodes.size === 0) {
+    console.log("   (vazio)");
+  } else {
+    for (const [code, data] of storage.authCodes) {
+      const expiresIn = Math.max(0, data.expiresAt - Date.now());
+      console.log(`   • ${code}`);
+      console.log(`     Client: ${data.client_id}`);
+      console.log(`     User: ${data.user}`);
+      console.log(`     Expira em: ${Math.floor(expiresIn / 1000)}s`);
+    }
+  }
+  
+  console.log("\n🔑 TOKENS:");
+  if (storage.tokens.size === 0) {
+    console.log("   (vazio)");
+  } else {
+    for (const [token, data] of storage.tokens) {
+      const shortToken = token.substring(0, 20) + "...";
+      const expiresIn = data.expiresAt ? Math.max(0, data.expiresAt - Date.now()) : "∞";
+      console.log(`   • ${shortToken}`);
+      console.log(`     Tipo: ${data.type || "access"}`);
+      console.log(`     User: ${data.user}`);
+      console.log(`     Client: ${data.client_id}`);
+      console.log(`     Expira em: ${expiresIn === "∞" ? "nunca" : Math.floor(expiresIn / 1000) + "s"}`);
+    }
+  }
+  
+  console.log("\n🍪 SESSIONS:");
+  if (storage.sessions.size === 0) {
+    console.log("   (vazio)");
+  } else {
+    for (const [sessionId, session] of storage.sessions) {
+      const shortSession = sessionId.substring(0, 20) + "...";
+      const expiresIn = Math.max(0, session.expiresAt - Date.now());
+      console.log(`   • ${shortSession}`);
+      console.log(`     User: ${session.user}`);
+      console.log(`     Criado: ${new Date(session.createdAt).toLocaleTimeString()}`);
+      console.log(`     Expira em: ${Math.floor(expiresIn / 1000)}s`);
+    }
+  }
+  
+  console.log("\n" + "=".repeat(60) + "\n");
 }
 
 // ===============================================
@@ -87,16 +145,16 @@ setInterval(cleanupExpired, 300000);
 // ===============================================
 
 // Criar nova sessão de usuário autenticado
-function createSession(user = "admin") {
+function createSession(username) {
   const sessionId = uuidv4();
   const session = {
-    user: user,
+    user: username,
     createdAt: Date.now(),
     expiresAt: Date.now() + config.SESSION_EXPIRY
   };
   
   storage.sessions.set(sessionId, session);
-  console.log(`✅ Nova sessão criada: ${sessionId} (user: ${user})`);
+  console.log(`✅ Nova sessão criada: ${sessionId} (user: ${username})`);
   
   return sessionId;
 }
@@ -124,6 +182,36 @@ function validateSession(sessionId) {
   
   console.log(`✅ Sessão válida: ${sessionId} (user: ${session.user})`);
   return session;
+}
+
+// ===============================================
+// VALIDAÇÃO DE USUÁRIOS
+// ===============================================
+
+function validateUser(username, password) {
+  console.log("\n🔐 Validando usuário...");
+  console.log(`   Username: ${username}`);
+  console.log(`   Password: ${password ? "[PRESENTE]" : "[AUSENTE]"}`);
+  
+  // Buscar senha no .env: OAUTH_USER_[username]
+  const envKey = `OAUTH_USER_${username}`;
+  const expectedPassword = process.env[envKey];
+  
+  console.log(`   Procurando variável: ${envKey}`);
+  console.log(`   Senha encontrada no .env: ${expectedPassword ? "SIM" : "NÃO"}`);
+  
+  if (!expectedPassword) {
+    console.log(`   ❌ Usuário "${username}" não encontrado no .env`);
+    return { valid: false, error: `Usuário "${username}" não cadastrado` };
+  }
+  
+  if (password !== expectedPassword) {
+    console.log(`   ❌ Senha incorreta para "${username}"`);
+    return { valid: false, error: "Senha incorreta" };
+  }
+  
+  console.log(`   ✅ Credenciais válidas para "${username}"!`);
+  return { valid: true, username: username };
 }
 
 // ===============================================
@@ -195,6 +283,9 @@ function setupOAuthEndpoints(app) {
     console.log(`   Name: ${client.client_name}`);
     console.log(`   Redirect URIs: ${client.redirect_uris.join(", ")}`);
     
+    // 🔥 LOG: Estado do storage após registrar cliente
+    logStorageState("APÓS REGISTRO DE CLIENTE");
+    
     res.json({
       client_id: clientId,
       client_secret: clientSecret,
@@ -208,7 +299,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 3. LOGIN FLOW (NOVO!)
+  // 3. LOGIN FLOW
   // -----------------------------------------------
   
   // GET /oauth/login - Exibir tela de login
@@ -225,26 +316,29 @@ function setupOAuthEndpoints(app) {
     console.log("\n🔑 POST /oauth/login");
     console.log("   Body keys:", Object.keys(req.body));
     
-    const { password, client_id, redirect_uri, response_type, scope, state, code_challenge, code_challenge_method } = req.body;
+    const { username, password, client_id, redirect_uri, response_type, scope, state, code_challenge, code_challenge_method } = req.body;
     
-    console.log(`   🔐 Tentativa de login com senha: ${password ? "[PRESENTE]" : "[AUSENTE]"}`);
-    console.log(`   📋 OAuth params: client_id=${client_id}, redirect_uri=${redirect_uri}`);
+    console.log(`   Username: ${username}`);
+    console.log(`   Password: ${password ? "[PRESENTE]" : "[AUSENTE]"}`);
+    console.log(`   OAuth params: client_id=${client_id}`);
     
-    // Validar senha
-    if (password !== config.OAUTH_PASSWORD) {
-      console.log("   ❌ Senha INCORRETA!");
+    // 🔥 Validar usuário com novo sistema
+    const validation = validateUser(username, password);
+    
+    if (!validation.valid) {
+      console.log(`   ❌ Validação falhou: ${validation.error}`);
       
       // Renderizar login novamente com erro
       return res.send(getLoginPage({
         ...req.body,
-        error: "Invalid password. Please try again."
+        error: validation.error
       }));
     }
     
-    console.log("   ✅ Senha CORRETA!");
+    console.log(`   ✅ Login autorizado: ${validation.username}`);
     
     // Criar sessão de usuário autenticado
-    const sessionId = createSession("admin");
+    const sessionId = createSession(validation.username);
     
     // Definir cookie de sessão seguro
     res.cookie("session_id", sessionId, {
@@ -255,6 +349,9 @@ function setupOAuthEndpoints(app) {
     });
     
     console.log(`   🍪 Cookie session_id definido: ${sessionId.substring(0, 20)}...`);
+    
+    // 🔥 LOG: Estado do storage após criar sessão
+    logStorageState("APÓS LOGIN BEM-SUCEDIDO");
     
     // Redirecionar para /oauth/authorize com os parâmetros preservados
     const authUrl = new URL(`${config.SERVER_URL}/oauth/authorize`);
@@ -272,7 +369,7 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 4. AUTHORIZATION ENDPOINT (MODIFICADO!)
+  // 4. AUTHORIZATION ENDPOINT
   // -----------------------------------------------
   
   app.get("/oauth/authorize", (req, res) => {
@@ -312,7 +409,7 @@ function setupOAuthEndpoints(app) {
       return res.status(400).send("Invalid response_type - only 'code' is supported");
     }
     
-    // 🔥 VERIFICAR SESSÃO (NOVO!)
+    // Verificar sessão
     const sessionId = req.cookies?.session_id;
     console.log(`   🍪 Cookie session_id: ${sessionId ? sessionId.substring(0, 20) + "..." : "[AUSENTE]"}`);
     
@@ -386,6 +483,9 @@ function setupOAuthEndpoints(app) {
       });
       
       console.log(`   🎫 Código autorizado: ${authCode}`);
+      
+      // 🔥 LOG: Estado do storage após aprovação
+      logStorageState("APÓS APROVAÇÃO (CÓDIGO GERADO)");
       
       redirectUrl.searchParams.set("code", authCode);
     } else {
@@ -476,6 +576,9 @@ function setupOAuthEndpoints(app) {
       console.log(`      Refresh: ${refreshToken.substring(0, 20)}...`);
       console.log(`      User: ${authData.user}`);
       
+      // 🔥 LOG: Estado do storage após gerar tokens
+      logStorageState("APÓS GERAR TOKENS");
+      
       res.json({
         access_token: accessToken,
         token_type: "Bearer",
@@ -513,7 +616,7 @@ function setupOAuthEndpoints(app) {
         access_token: newAccessToken,
         token_type: "Bearer",
         expires_in: Math.floor(config.TOKEN_EXPIRY / 1000),
-        refresh_token: refresh_token, // Mantém o mesmo refresh token
+        refresh_token: refresh_token,
         scope: refreshData.scope
       });
       
@@ -530,7 +633,7 @@ function setupOAuthEndpoints(app) {
   // -----------------------------------------------
   
   app.post("/oauth/revoke", (req, res) => {
-    const { token, token_type_hint } = req.body;
+    const { token } = req.body;
     
     console.log("\n🗑️  POST /oauth/revoke");
     console.log(`   Token: ${token ? token.substring(0, 20) + "..." : "[AUSENTE]"}`);
@@ -538,6 +641,9 @@ function setupOAuthEndpoints(app) {
     if (storage.tokens.has(token)) {
       storage.tokens.delete(token);
       console.log("   ✅ Token revogado");
+      
+      // 🔥 LOG: Estado do storage após revogar token
+      logStorageState("APÓS REVOGAR TOKEN");
     } else {
       console.log("   ⚠️  Token não encontrado (já revogado ou inválido)");
     }
@@ -618,7 +724,7 @@ function setupOAuthEndpoints(app) {
       active_tokens: storage.tokens.size,
       active_sessions: storage.sessions.size,
       auto_approve: config.AUTO_APPROVE,
-      authentication: config.AUTO_APPROVE ? "disabled (auto-approve)" : "enabled (password required)",
+      authentication: "enabled (multi-user)",
       token_expiry: config.TOKEN_EXPIRY / 1000 + " seconds",
       session_expiry: config.SESSION_EXPIRY / 1000 + " seconds",
       server_url: config.SERVER_URL
@@ -626,7 +732,44 @@ function setupOAuthEndpoints(app) {
   });
   
   // -----------------------------------------------
-  // 9. ENDPOINT DE DOCUMENTAÇÃO
+  // 9. ENDPOINT DE DEBUG
+  // -----------------------------------------------
+  
+  app.get("/debug/storage", (req, res) => {
+    // Retornar storage em formato JSON amigável
+    const debug = {
+      clients: Array.from(storage.clients.entries()).map(([id, data]) => ({
+        id,
+        name: data.client_name,
+        redirect_uris: data.redirect_uris,
+        created_at: new Date(data.created_at).toISOString()
+      })),
+      authCodes: Array.from(storage.authCodes.entries()).map(([code, data]) => ({
+        code: code.substring(0, 20) + "...",
+        user: data.user,
+        client_id: data.client_id,
+        expires_in_seconds: Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000))
+      })),
+      tokens: Array.from(storage.tokens.entries()).map(([token, data]) => ({
+        token: token.substring(0, 20) + "...",
+        type: data.type || "access",
+        user: data.user,
+        client_id: data.client_id,
+        expires_in_seconds: data.expiresAt ? Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000)) : null
+      })),
+      sessions: Array.from(storage.sessions.entries()).map(([id, data]) => ({
+        id: id.substring(0, 20) + "...",
+        user: data.user,
+        created_at: new Date(data.createdAt).toISOString(),
+        expires_in_seconds: Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000))
+      }))
+    };
+    
+    res.json(debug);
+  });
+  
+  // -----------------------------------------------
+  // 10. ENDPOINT DE DOCUMENTAÇÃO
   // -----------------------------------------------
   
   app.get("/docs", (req, res) => {

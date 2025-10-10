@@ -204,6 +204,7 @@ const getHomePage = (SERVER_URL, dbConnected, transportsCount, toolsCount) => `
 
 const getLoginPage = (params) => {
   const error = params.error || "";
+  const username = params.username || "";
   const client_id = params.client_id || "";
   const redirect_uri = params.redirect_uri || "";
   const response_type = params.response_type || "";
@@ -270,6 +271,7 @@ const getLoginPage = (params) => {
           margin-bottom: 0.5rem;
           font-size: 0.875rem;
         }
+        input[type="text"],
         input[type="password"] {
           width: 100%;
           padding: 12px;
@@ -278,6 +280,7 @@ const getLoginPage = (params) => {
           font-size: 1rem;
           transition: border-color 0.2s;
         }
+        input[type="text"]:focus,
         input[type="password"]:focus {
           outline: none;
           border-color: #3b82f6;
@@ -309,11 +312,17 @@ const getLoginPage = (params) => {
           color: #1e40af;
           text-align: center;
         }
-        .security-note {
+        .users-hint {
           margin-top: 1rem;
-          text-align: center;
+          padding: 10px;
+          background: #f3f4f6;
+          border-radius: 6px;
           font-size: 0.75rem;
-          color: #9ca3af;
+          color: #6b7280;
+          text-align: center;
+        }
+        .users-hint strong {
+          color: #374151;
         }
       </style>
     </head>
@@ -326,14 +335,26 @@ const getLoginPage = (params) => {
         
         <form method="POST" action="/oauth/login">
           <div class="form-group">
-            <label for="password">Access Password</label>
+            <label for="username">Username</label>
+            <input 
+              type="text" 
+              id="username" 
+              name="username" 
+              placeholder="gabriel ou vinicius"
+              value="${username}"
+              required
+              autofocus
+            >
+          </div>
+          
+          <div class="form-group">
+            <label for="password">Password</label>
             <input 
               type="password" 
               id="password" 
               name="password" 
               placeholder="Enter your password"
               required
-              autofocus
             >
           </div>
           
@@ -350,11 +371,12 @@ const getLoginPage = (params) => {
         </form>
         
         <div class="info">
-          🔒 This is a secure OAuth 2.1 authentication flow with PKCE
+          🔒 OAuth 2.1 with PKCE
         </div>
         
-        <div class="security-note">
-          Protected by K2 Sistemas © 2025
+        <div class="users-hint">
+          <strong>Usuários disponíveis:</strong><br>
+          gabriel | vinicius
         </div>
       </div>
     </body>
