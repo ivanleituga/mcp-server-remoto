@@ -340,7 +340,6 @@ const getLoginPage = (params) => {
               type="text" 
               id="username" 
               name="username" 
-              placeholder="gabriel ou vinicius"
               value="${username}"
               required
               autofocus
@@ -372,12 +371,7 @@ const getLoginPage = (params) => {
         
         <div class="info">
           🔒 OAuth 2.1 with PKCE
-        </div>
-        
-        <div class="users-hint">
-          <strong>Usuários disponíveis:</strong><br>
-          gabriel | vinicius
-        </div>
+        </div>     
       </div>
     </body>
   </html>

@@ -183,7 +183,6 @@ app.listen(PORT, () => {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔗 URL: ${SERVER_URL}`);
-  console.log(`📊 Database: ${isConnected() ? "Connected" : "Disconnected"}`);
   console.log(`🔧 Tools: ${toolsCount} registered`);
   console.log("🔐 OAuth: Enabled (PostgreSQL)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

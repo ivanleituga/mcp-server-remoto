@@ -1,7 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { getAuthorizePage, getDocsPage, getLoginPage } = require("../utils/templates");
-const { validateUser } = require("./db_auth");
 const storage = require("./oauth_storage");
 
 // ===============================================
@@ -178,7 +177,7 @@ function setupOAuthEndpoints(app) {
     console.log(`   OAuth params: client_id=${client_id}`);
     
     // Validar usuário via banco de dados
-    const validation = await validateUser(username, password);
+    const validation = await storage.validateUser(username, password);
     
     if (!validation.valid) {
       console.log(`   ❌ Validação falhou: ${validation.error}`);
@@ -587,10 +586,17 @@ function setupOAuthEndpoints(app) {
   
   app.get("/oauth/status", async (req, res) => {
     try {
-      const clientsCount = (await storage.pool.query("SELECT COUNT(*) FROM mcp_clients")).rows[0].count;
-      const codesCount = (await storage.pool.query("SELECT COUNT(*) FROM mcp_auth_codes WHERE used = false")).rows[0].count;
-      const tokensCount = (await storage.pool.query("SELECT COUNT(*) FROM mcp_tokens WHERE revoked = false")).rows[0].count;
-      const sessionsCount = (await storage.pool.query("SELECT COUNT(*) FROM mcp_sessions")).rows[0].count;
+      const { pool } = require("./database");
+      
+      const clientsResult = await pool.query("SELECT COUNT(*) FROM mcp_clients");
+      const codesResult = await pool.query("SELECT COUNT(*) FROM mcp_auth_codes WHERE used = false");
+      const tokensResult = await pool.query("SELECT COUNT(*) FROM mcp_tokens WHERE revoked = false");
+      const sessionsResult = await pool.query("SELECT COUNT(*) FROM mcp_sessions WHERE expires_at > CURRENT_TIMESTAMP");
+      
+      const clientsCount = clientsResult.rows[0].count;
+      const codesCount = codesResult.rows[0].count;
+      const tokensCount = tokensResult.rows[0].count;
+      const sessionsCount = sessionsResult.rows[0].count;
       
       res.json({
         clients: parseInt(clientsCount),
