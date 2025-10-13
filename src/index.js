@@ -1,8 +1,9 @@
 const { getHomePage } = require("../utils/templates");
-const { setupOAuthEndpoints } = require("./oauth");
+const { setupOAuthEndpoints } = require("./oauth_endpoints"); // ← MUDOU
 const { query, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
 const { createMcpServer, toolsCount } = require("./mcp_server");
+const { cleanupExpired } = require("./oauth_storage"); // ← NOVO
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 require("dotenv").config();
 
@@ -163,9 +164,15 @@ app.get("/", (req, res) => {
 // LIMPEZA PERIÓDICA
 // ===============================================
 
+// Limpeza de sessões MCP (a cada 5 minutos)
 setInterval(() => {
   sessionManager.cleanup();
-}, 300000); // A cada 5 minutos
+}, 300000);
+
+// Limpeza de dados OAuth expirados (a cada 5 minutos)
+setInterval(() => {
+  cleanupExpired();
+}, 300000);
 
 // ===============================================
 // INICIALIZAÇÃO
@@ -178,7 +185,7 @@ app.listen(PORT, () => {
   console.log(`🔗 URL: ${SERVER_URL}`);
   console.log(`📊 Database: ${isConnected() ? "Connected" : "Disconnected"}`);
   console.log(`🔧 Tools: ${toolsCount} registered`);
-  console.log("🔐 OAuth: Enabled (auto-approve)");
+  console.log("🔐 OAuth: Enabled (PostgreSQL)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
   console.log("");
