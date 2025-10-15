@@ -355,7 +355,6 @@ const getDocsPage = (config) => `
     
     <h2>Status Endpoints</h2>
     <ul>
-      <li><a href="/oauth/status">/oauth/status</a> - OAuth statistics</li>
       <li><a href="/health">/health</a> - Server health check</li>
     </ul>
     
