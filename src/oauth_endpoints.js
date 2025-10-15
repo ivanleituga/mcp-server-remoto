@@ -24,23 +24,6 @@ const config = {
 // ===============================================
 const authCodes = new Map();
 
-// Cleanup automático de códigos expirados
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  
-  for (const [code, data] of authCodes.entries()) {
-    if (data.expiresAt < now) {
-      authCodes.delete(code);
-      cleaned++;
-    }
-  }
-  
-  if (cleaned > 0) {
-    console.log(`🧹 Auth codes expirados limpos: ${cleaned}`);
-  }
-}, 60000); // A cada 1 minuto
-
 function createAuthCode(codeData) {
   const { code, client_id, user_id, username, redirect_uri, scope, code_challenge, code_challenge_method, expiresAt } = codeData;
   
@@ -55,9 +38,6 @@ function createAuthCode(codeData) {
     expiresAt,
     used: false
   });
-  
-  console.log(`   💾 Auth code armazenado em memória: ${code.substring(0, 20)}...`);
-  console.log(`   📊 Total codes em memória: ${authCodes.size}`);
 }
 
 function getAuthCode(code) {
@@ -478,7 +458,7 @@ function setupOAuthEndpoints(app) {
   
   async function validateToken(req, res, next) {
     if (req.body?.method === "initialize") {
-      console.log("🆓 Initialize request - bypass OAuth");
+      console.log("🆓 Initialize request");
       return next();
     }
     
@@ -532,38 +512,6 @@ function setupOAuthEndpoints(app) {
       error_description: "Invalid authorization header format"
     });
   }
-  
-  // -----------------------------------------------
-  // STATUS & DEBUG ENDPOINTS
-  // -----------------------------------------------
-  
-  app.get("/oauth/status", async (req, res) => {
-    try {
-      const { pool } = require("./database");
-      
-      const clientsResult = await pool.query("SELECT COUNT(*) FROM mcp_clients");
-      const tokensResult = await pool.query("SELECT COUNT(*) FROM mcp_tokens WHERE revoked = false");
-      
-      const clientsCount = clientsResult.rows[0].count;
-      const tokensCount = tokensResult.rows[0].count;
-      
-      res.json({
-        clients: parseInt(clientsCount),
-        active_codes_in_memory: authCodes.size,
-        active_tokens: parseInt(tokensCount),
-        authentication: "enabled (database)",
-        storage: "PostgreSQL (tokens) + Memory (codes)",
-        token_expiry: config.TOKEN_EXPIRY / 1000 + " seconds",
-        code_expiry: config.CODE_EXPIRY / 1000 + " seconds",
-        server_url: config.SERVER_URL,
-        oauth_flow: "simplified (no sessions, codes in memory)"
-      });
-      
-    } catch (error) {
-      console.error("❌ Erro ao buscar status:", error.message);
-      res.status(500).json({ error: "internal_error" });
-    }
-  });
   
   app.get("/docs", (req, res) => {
     res.send(getDocsPage(config));
