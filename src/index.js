@@ -1,16 +1,15 @@
 const { getHomePage } = require("../utils/templates");
-const { setupOAuthEndpoints } = require("./oauth_endpoints"); // ← MUDOU
+const { setupOAuthEndpoints } = require("./oauth_endpoints");
 const { query, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
 const { createMcpServer, toolsCount } = require("./mcp_server");
-const { cleanupExpired } = require("./oauth_storage"); // ← NOVO
+const { cleanupExpired } = require("./oauth_storage");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
-const cookieParser = require("cookie-parser");
 
 // ===============================================
 // CONFIGURAÇÃO
@@ -24,14 +23,12 @@ const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
 // MIDDLEWARES
 // ===============================================
 
-// IMPORTANTE: Aumentar limite para requisições grandes
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(cookieParser());
 
 // Log de todas as requisições
 app.use((req, res, next) => {
@@ -66,7 +63,6 @@ app.post("/mcp", validateToken, async (req, res) => {
   console.log(`   Method: ${req.body?.method || "unknown"}`);
   console.log(`   Session: ${sessionId || "new"}`);
   
-  // Log detalhado para requests de tools
   if (req.body?.method === "tools/call") {
     console.log("   🔧 Tool Call Details:");
     console.log(`      Name: ${req.body?.params?.name}`);
@@ -74,13 +70,11 @@ app.post("/mcp", validateToken, async (req, res) => {
   }
   
   try {
-    // Verificar se é uma requisição inicial ou sem sessão
     if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
       const newSessionId = sessionId || crypto.randomUUID();
       
       console.log(`🆕 Criando nova sessão: ${newSessionId}`);
       
-      // Criar novo transport com configurações corretas
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
@@ -89,28 +83,22 @@ app.post("/mcp", validateToken, async (req, res) => {
         }
       });
       
-      // Conectar o servidor ao transport
       await mcpServer.connect(transport);
       
-      // Definir header de sessão
       res.setHeader("Mcp-Session-Id", newSessionId);
       
-      // Processar a requisição
       await transport.handleRequest(req, res, req.body);
       return;
     }
     
-    // Usar transport existente
     const transport = sessionManager.get(sessionId);
     if (transport) {
       console.log(`♻️ Reusando sessão: ${sessionId}`);
       
-      // Processar a requisição com o transport existente
       await transport.handleRequest(req, res, req.body);
       return;
     }
     
-    // Erro: sessão inválida
     console.error(`❌ Sessão inválida: ${sessionId}`);
     res.status(400).json({
       jsonrpc: "2.0",
@@ -137,10 +125,59 @@ app.post("/mcp", validateToken, async (req, res) => {
 });
 
 // ===============================================
+// DELETE /mcp - Cleanup de Sessão
+// ===============================================
+
+app.delete("/mcp", validateToken, async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"];
+  
+  console.log("\n🗑️  DELETE /mcp");
+  console.log(`   Session: ${sessionId || "none"}`);
+  
+  if (!sessionId) {
+    console.log("   ⚠️  Nenhuma sessão especificada");
+    return res.status(400).json({
+      error: "missing_session_id",
+      message: "Header Mcp-Session-Id required"
+    });
+  }
+  
+  try {
+    if (sessionManager.exists(sessionId)) {
+      const transport = sessionManager.get(sessionId);
+      if (transport) {
+        await transport.close();
+        console.log(`   ✅ Transport fechado: ${sessionId}`);
+      }
+      
+      sessionManager.remove(sessionId);
+      console.log(`   ✅ Sessão removida: ${sessionId}`);
+      
+      res.status(200).json({ 
+        message: "Session deleted successfully",
+        session_id: sessionId 
+      });
+    } else {
+      console.log(`   ⚠️  Sessão não encontrada: ${sessionId}`);
+      res.status(200).json({ 
+        message: "Session not found or already deleted",
+        session_id: sessionId 
+      });
+    }
+    
+  } catch (error) {
+    console.error("   ❌ Erro ao deletar sessão:", error.message);
+    res.status(500).json({
+      error: "internal_error",
+      message: error.message
+    });
+  }
+});
+
+// ===============================================
 // ENDPOINTS AUXILIARES
 // ===============================================
 
-// Health check
 app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy",
@@ -150,7 +187,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Página inicial
 app.get("/", (req, res) => {
   res.send(getHomePage(
     SERVER_URL, 
@@ -184,7 +220,7 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔗 URL: ${SERVER_URL}`);
   console.log(`🔧 Tools: ${toolsCount} registered`);
-  console.log("🔐 OAuth: Enabled (PostgreSQL)");
+  console.log("🔐 OAuth: Enabled");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
   console.log("");
