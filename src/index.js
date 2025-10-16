@@ -56,7 +56,12 @@ const mcpServer = createMcpServer(query);
 // ===============================================
 
 app.get("/", (_req, res) => {
-  res.send(getHomePage(SERVER_URL, toolsCount));
+  res.send(getHomePage(
+    SERVER_URL, 
+    isConnected(),
+    sessionManager.count(),
+    toolsCount
+  ));
 });
 
 app.get("/health", async (_req, res) => {
