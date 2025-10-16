@@ -52,6 +52,26 @@ const { validateToken } = setupOAuthEndpoints(app);
 const mcpServer = createMcpServer(query);
 
 // ===============================================
+// ROTAS BÁSICAS
+// ===============================================
+
+app.get("/", (_req, res) => {
+  res.send(getHomePage(SERVER_URL, toolsCount));
+});
+
+app.get("/health", async (_req, res) => {
+  const dbStatus = isConnected();
+  
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    database: dbStatus ? "connected" : "disconnected",
+    tools: toolsCount,
+    server: SERVER_URL
+  });
+});
+
+// ===============================================
 // ENDPOINT MCP
 // ===============================================
 
@@ -175,42 +195,6 @@ app.delete("/mcp", validateToken, async (req, res) => {
 });
 
 // ===============================================
-// ENDPOINTS AUXILIARES
-// ===============================================
-
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "healthy",
-    database: isConnected(),
-    sessions: sessionManager.count(),
-    tools: toolsCount
-  });
-});
-
-app.get("/", (req, res) => {
-  res.send(getHomePage(
-    SERVER_URL, 
-    isConnected(),
-    sessionManager.count(),
-    toolsCount
-  ));
-});
-
-// ===============================================
-// LIMPEZA PERIÓDICA
-// ===============================================
-
-// Limpeza de sessões MCP (a cada 5 minutos)
-setInterval(() => {
-  sessionManager.cleanup();
-}, 300000);
-
-// Limpeza de dados OAuth expirados (a cada 5 minutos)
-setInterval(() => {
-  cleanupExpired();
-}, 300000);
-
-// ===============================================
 // INICIALIZAÇÃO
 // ===============================================
 
@@ -220,19 +204,26 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔗 URL: ${SERVER_URL}`);
   console.log(`🔧 Tools: ${toolsCount} registered`);
-  console.log("🔐 OAuth: Enabled");
+  console.log("🔐 OAuth: Enabled (DCR + PKCE)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
-  console.log("");
-});
-
-// ===============================================
-// GRACEFUL SHUTDOWN
-// ===============================================
-
-process.on("SIGINT", async () => {
-  console.log("\n🛑 Shutting down...");
-  await sessionManager.closeAll();
-  console.log("✅ Server stopped");
-  process.exit(0);
+  
+  if (isConnected()) {
+    console.log("✅ Banco de dados conectado");
+  } else {
+    console.log("⚠️  Banco de dados não conectado!");
+  }
+  
+  // Limpeza periódica de tokens expirados (a cada 1 hora)
+  setInterval(() => {
+    cleanupExpired();
+  }, 3600000);
+  
+  console.log("\n📝 OAuth Endpoints:");
+  console.log("   POST /oauth/register");
+  console.log("   GET  /oauth/authorize");
+  console.log("   POST /oauth/authorize");
+  console.log("   POST /oauth/token");
+  console.log("   POST /oauth/revoke");
+  console.log("\n");
 });

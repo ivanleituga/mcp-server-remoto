@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const { getUnifiedAuthPage, getDocsPage } = require("../utils/templates");
 const { validateUser } = require("./oauth_storage");
 const {
+  createClient,
   getClientById,
   createToken,
   getToken,
@@ -80,7 +81,7 @@ function setupOAuthEndpoints(app) {
       issuer: config.SERVER_URL,
       authorization_endpoint: `${config.SERVER_URL}/oauth/authorize`,
       token_endpoint: `${config.SERVER_URL}/oauth/token`,
-      // ❌ REMOVIDO: registration_endpoint
+      registration_endpoint: `${config.SERVER_URL}/oauth/register`,  // ✅ DCR
       revocation_endpoint: `${config.SERVER_URL}/oauth/revoke`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
@@ -101,6 +102,68 @@ function setupOAuthEndpoints(app) {
       resource_documentation: `${config.SERVER_URL}/docs`,
       resource_signing_alg_values_supported: ["none"]
     });
+  });
+
+  // -----------------------------------------------
+  // DYNAMIC CLIENT REGISTRATION
+  // -----------------------------------------------
+  
+  app.post("/oauth/register", async (req, res) => {
+    const { client_name, redirect_uris = [], scope } = req.body;
+    
+    console.log("\n📝 POST /oauth/register");
+    console.log(`   Body keys: ${JSON.stringify(Object.keys(req.body))}`);
+    console.log("📝 Client Registration Request:", JSON.stringify(req.body, null, 2));
+    
+    try {
+      if (!client_name) {
+        console.log("   ❌ Client name ausente");
+        return res.status(400).json({
+          error: "invalid_client_metadata",
+          error_description: "client_name is required"
+        });
+      }
+      
+      if (!Array.isArray(redirect_uris) || redirect_uris.length === 0) {
+        console.log("   ❌ Redirect URIs ausente ou inválido");
+        return res.status(400).json({
+          error: "invalid_redirect_uri",
+          error_description: "At least one redirect_uri is required"
+        });
+      }
+      
+      const client_id = `client_${uuidv4()}`;
+      
+      await createClient({
+        client_id,
+        client_name,
+        redirect_uris,
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        scope: scope || "mcp"
+      });
+      
+      console.log(`   ✅ Client registered: ${client_id}`);
+      console.log(`      Name: ${client_name}`);
+      console.log(`      Redirect URIs: ${redirect_uris.join(", ")}`);
+      
+      res.status(201).json({
+        client_id,
+        client_name,
+        redirect_uris,
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        scope: scope || "mcp"
+      });
+      
+    } catch (error) {
+      console.error("   ❌ Erro ao registrar cliente:", error.message);
+      res.status(500).json({
+        error: "server_error",
+        error_description: "Internal error during client registration"
+      });
+    }
   });
 
   // -----------------------------------------------
@@ -190,7 +253,6 @@ function setupOAuthEndpoints(app) {
     
       if (!validation.valid) {
         console.log(`   ❌ Validação falhou: ${validation.error}`);
-      
         const client = await getClientById(client_id);
         return res.send(getUnifiedAuthPage(client, req.body, validation.error));
       }
@@ -236,6 +298,8 @@ function setupOAuthEndpoints(app) {
     const { grant_type, code, code_verifier, refresh_token } = req.body;
     
     console.log("\n🎫 POST /oauth/token");
+    console.log(`   Body keys: ${JSON.stringify(Object.keys(req.body))}`);
+    console.log("🎫 POST /oauth/token");
     console.log(`   Grant Type: ${grant_type}`);
     
     try {
