@@ -27,7 +27,6 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
     <h2>Endpoints</h2>
     <ul>
       <li><a href="/.well-known/oauth-authorization-server">OAuth Discovery</a></li>
-      <li><a href="/oauth/status">OAuth Status</a></li>
       <li><a href="/docs">Documentation</a></li>
       <li><a href="/health">Health Check</a></li>
     </ul>
