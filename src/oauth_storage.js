@@ -4,9 +4,6 @@ const { pool } = require("./database");
 // AUTENTICAÇÃO DE USUÁRIOS
 // ===============================================
 
-/**
- * Valida credenciais do usuário no banco de dados
- */
 async function validateUser(username, password) {
   console.log("\n🔐 Validando usuário no banco...");
   console.log(`   Username: ${username}`);
@@ -77,7 +74,6 @@ async function validateUser(username, password) {
 async function createClient(clientData) {
   const {
     client_id,
-    client_secret,
     client_name,
     redirect_uris,
     grant_types = ["authorization_code", "refresh_token"],
@@ -88,7 +84,6 @@ async function createClient(clientData) {
   const query = `
     INSERT INTO mcp_clients (
       client_id, 
-      client_secret, 
       client_name, 
       redirect_uris, 
       grant_types, 
@@ -101,7 +96,6 @@ async function createClient(clientData) {
 
   const result = await pool.query(query, [
     client_id,
-    client_secret,
     client_name,
     redirect_uris,
     grant_types,
