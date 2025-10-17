@@ -107,6 +107,7 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
       
       .endpoint-list {
         list-style: none;
+        font-size: 1.3rem;
       }
       
       .endpoint-list li {
