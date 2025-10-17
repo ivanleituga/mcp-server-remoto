@@ -426,7 +426,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
   <body>
     <div class="header">
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
-      <h1>Autenticação OAuth</h1>
+      <h1>Autenticação</h1>
     </div>
     
     <div class="content">
@@ -505,7 +505,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
   `;
 };
 
-const getDocsPage = (config) => `
+const getDocsPage = () => `
 <!DOCTYPE html>
 <html lang="pt-BR">
   <head>
@@ -625,25 +625,6 @@ const getDocsPage = (config) => `
         font-size: 0.9rem;
       }
       
-      .info-box {
-        background: #fef3c7;
-        border-left: 4px solid #f59e0b;
-        padding: 16px;
-        border-radius: 6px;
-        margin: 20px 0;
-      }
-      
-      .info-box strong {
-        color: #92400e;
-        display: block;
-        margin-bottom: 8px;
-      }
-      
-      .info-box p {
-        color: #78350f;
-        font-size: 0.9rem;
-      }
-      
       .footer {
         text-align: center;
         padding: 24px;
@@ -675,21 +656,11 @@ const getDocsPage = (config) => `
     <div class="header">
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
       <div class="header-content">
-        <h1>Documentação da API OAuth MCP</h1>
+        <h1>Documentação</h1>
       </div>
     </div>
     
     <div class="container">
-      <div class="section">
-        <h2>Visão Geral</h2>
-        <p>Este servidor implementa um fluxo OAuth 2.1 simplificado para o Model Context Protocol (MCP). O login e a autorização acontecem em uma única etapa, sem necessidade de sessões.</p>
-        
-        <div class="info-box">
-          <strong>Diferencial Principal</strong>
-          <p>Esta implementação combina login e autorização em uma única página, eliminando a necessidade de cookies de sessão. Os códigos de autorização são armazenados em memória para máximo desempenho.</p>
-        </div>
-      </div>
-      
       <div class="section">
         <h2>Endpoints de Descoberta</h2>
         
@@ -745,24 +716,6 @@ const getDocsPage = (config) => `
           <span class="method delete">DELETE</span> <code>/mcp</code>
           <p>Limpeza de sessão MCP (desconexão graciosa)</p>
         </div>
-      </div>
-      
-      <div class="section">
-        <h2>Configuração do Servidor</h2>
-        <pre>URL do Servidor: ${config.SERVER_URL}
-          Expiração de Token: ${config.TOKEN_EXPIRY / 1000} segundos (${config.TOKEN_EXPIRY / 60000} minutos)
-          Expiração de Código: ${config.CODE_EXPIRY / 1000} segundos (${config.CODE_EXPIRY / 60000} minutos)
-          Fluxo OAuth: Simplificado (sem sessões)
-          Armazenamento: PostgreSQL (tokens) + Memória (códigos)
-        </pre>
-      </div>
-      
-      <div class="section">
-        <h2>Endpoints de Status</h2>
-        <ul>
-          <li><a href="/health">/health</a> - Verificação de saúde do servidor</li>
-          <li><a href="/">/</a> - Página inicial com status do sistema</li>
-        </ul>
       </div>
     </div>
     

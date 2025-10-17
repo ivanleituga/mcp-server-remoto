@@ -613,7 +613,7 @@ function setupOAuthEndpoints(app) {
   }
   
   app.get("/docs", (_req, res) => {
-    res.send(getDocsPage(config));
+    res.send(getDocsPage());
   });
   
   return { validateToken };
