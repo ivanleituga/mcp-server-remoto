@@ -168,7 +168,6 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
       <div class="header-content">
         <h1>MCP Well Database Server</h1>
-        <p class="subtitle">Sistema de Geração de Perfis de Poços</p>
       </div>
     </div>
     
@@ -196,10 +195,7 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
       </div>
       
       <div class="section">
-        <h2>Endpoints Disponíveis</h2>
         <ul class="endpoint-list">
-          <li><a href="/.well-known/oauth-authorization-server">OAuth Discovery (Authorization Server)</a></li>
-          <li><a href="/.well-known/oauth-protected-resource">OAuth Discovery (Protected Resource)</a></li>
           <li><a href="/docs">Documentação da API</a></li>
           <li><a href="/health">Health Check</a></li>
         </ul>
@@ -216,7 +212,7 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
     </div>
     
     <div class="footer">
-      &copy; 2025 K2 Sistemas - Visualizador de Perfis | Versão 2.0
+      &copy; 2025 K2 Sistemas
     </div>
   </body>
 </html>
@@ -502,7 +498,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
     </div>
     
     <div class="footer">
-      &copy; 2025 K2 Sistemas - Sistema de Geração de Perfis de Poços
+      &copy; 2025 K2 Sistemas
     </div>
   </body>
 </html>
@@ -680,7 +676,6 @@ const getDocsPage = (config) => `
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
       <div class="header-content">
         <h1>Documentação da API OAuth MCP</h1>
-        <p class="subtitle">Sistema de Geração de Perfis de Poços</p>
       </div>
     </div>
     
@@ -772,7 +767,7 @@ const getDocsPage = (config) => `
     </div>
     
     <div class="footer">
-      &copy; 2025 K2 Sistemas - Visualizador de Perfis | Versão 2.0
+      &copy; 2025 K2 Sistemas
     </div>
   </body>
 </html>

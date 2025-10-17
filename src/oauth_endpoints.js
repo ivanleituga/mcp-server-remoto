@@ -77,16 +77,6 @@ function setupOAuthEndpoints(app) {
   app.get("/.well-known/oauth-authorization-server", (_req, res) => {
     console.log("📋 OAuth Discovery: Authorization Server");
 
-    // Adicionar cabeçalhos de segurança para evitar alerta do Chrome
-    res.set({
-      "Content-Type": "application/json; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "public, max-age=3600",
-      "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'none'",
-      "Referrer-Policy": "no-referrer"
-    });
-
     res.json({
       issuer: config.SERVER_URL,
       authorization_endpoint: `${config.SERVER_URL}/oauth/authorize`,
@@ -104,16 +94,6 @@ function setupOAuthEndpoints(app) {
 
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
     console.log("📋 OAuth Discovery: Protected Resource");
-  
-    // Adicionar cabeçalhos de segurança para evitar alerta do Chrome
-    res.set({
-      "Content-Type": "application/json; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "public, max-age=3600",
-      "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'none'",
-      "Referrer-Policy": "no-referrer"
-    });
   
     res.json({
       resource: config.SERVER_URL,
