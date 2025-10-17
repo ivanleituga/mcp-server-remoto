@@ -76,7 +76,7 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
       }
       
       .status-card .value {
-        font-size: 1.5rem;
+        font-size: 1.05rem;
         color: #1a202c;
         font-weight: 600;
       }
@@ -374,13 +374,11 @@ const getUnifiedAuthPage = (client, params, error = null) => {
       }
       
       .buttons {
-        display: flex;
-        gap: 12px;
         margin-top: 24px;
       }
       
       button {
-        flex: 1;
+        width: 100%;
         padding: 12px;
         border: none;
         border-radius: 6px;
@@ -405,16 +403,6 @@ const getUnifiedAuthPage = (client, params, error = null) => {
         transform: translateY(0);
       }
       
-      .deny {
-        background: #f3f4f6;
-        color: #374151;
-        border: 2px solid #e5e7eb;
-      }
-      
-      .deny:hover {
-        background: #e5e7eb;
-      }
-      
       .footer {
         text-align: center;
         padding: 20px;
@@ -426,7 +414,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
   <body>
     <div class="header">
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
-      <h1>Autenticação</h1>
+      <h1>Autenticação OAuth</h1>
     </div>
     
     <div class="content">
@@ -488,9 +476,6 @@ const getUnifiedAuthPage = (client, params, error = null) => {
           <div class="buttons">
             <button type="submit" name="action" value="approve" class="approve">
               Aprovar e Entrar
-            </button>
-            <button type="submit" name="action" value="deny" class="deny">
-              Negar
             </button>
           </div>
         </form>
