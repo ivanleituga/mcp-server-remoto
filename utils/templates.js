@@ -220,7 +220,6 @@ const getHomePage = (serverUrl, dbConnected, sessionCount, toolCount) => `
 
 const getUnifiedAuthPage = (client, params, error = null) => {
   const client_name = client.client_name || "Aplicação Desconhecida";
-  const scope = params.scope || "mcp";
   
   return `
 <!DOCTYPE html>
@@ -414,7 +413,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
   <body>
     <div class="header">
       <img src="/utils/logo-k2.png" alt="K2 Sistemas" onerror="this.style.display='none'">
-      <h1>Autenticação OAuth</h1>
+      <h1>Autenticação</h1>
     </div>
     
     <div class="content">
@@ -426,14 +425,14 @@ const getUnifiedAuthPage = (client, params, error = null) => {
         
         <div class="app-info">
           <strong>${client_name}</strong>
-          <p>está solicitando acesso aos seus dados de poços</p>
+          <p>Está solicitando acesso aos seus dados</p>
         </div>
         
         <div class="permissions">
           <strong>Permissões Solicitadas</strong>
           <ul>
             <li>Consultar dados geológicos de poços</li>
-            <li>Acessar ferramentas MCP (${scope})</li>
+            <li>Acessar ferramentas MCP</li>
             <li>Ler informações do banco de dados</li>
           </ul>
         </div>
@@ -468,7 +467,7 @@ const getUnifiedAuthPage = (client, params, error = null) => {
           <input type="hidden" name="client_id" value="${params.client_id}">
           <input type="hidden" name="redirect_uri" value="${params.redirect_uri}">
           <input type="hidden" name="response_type" value="${params.response_type || "code"}">
-          <input type="hidden" name="scope" value="${scope}">
+          <input type="hidden" name="scope" value="${params.scope || "mcp"}">
           ${params.state ? `<input type="hidden" name="state" value="${params.state}">` : ""}
           ${params.code_challenge ? `<input type="hidden" name="code_challenge" value="${params.code_challenge}">` : ""}
           ${params.code_challenge_method ? `<input type="hidden" name="code_challenge_method" value="${params.code_challenge_method}">` : ""}
