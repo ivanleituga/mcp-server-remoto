@@ -86,5 +86,4 @@ class SessionManager {
   }
 }
 
-// Exportar instância única (singleton)
 module.exports = new SessionManager();

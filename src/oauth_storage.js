@@ -223,19 +223,12 @@ async function cleanupExpired() {
 // ===============================================
 
 module.exports = {
-  // Autenticação
   validateUser,
-  
-  // Clients
   createClient,
   getClientById,
-
-  // Tokens
   createToken,
   getToken,
   revokeToken,
   deleteToken,
-
-  // Cleanup
   cleanupExpired
 };

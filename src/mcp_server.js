@@ -1,7 +1,7 @@
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { tools, executeTool } = require("./tools");
 
-// Criar instância do servidor MCP usando Server (não McpServer)
+// Criar instância do servidor MCP
 function createMcpServer(queryFunction) {
   const server = new Server({
     name: "mcp-well-database",
@@ -76,7 +76,6 @@ function createMcpServer(queryFunction) {
   return server;
 }
 
-// Exportar função de criação e contador de tools
 module.exports = { 
   createMcpServer,
   toolsCount: tools.length 

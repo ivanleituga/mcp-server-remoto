@@ -54,7 +54,6 @@ function isConnected() {
   await testConnection();
 })();
 
-// Exportar funções E pool
 module.exports = {
   query,
   testConnection,

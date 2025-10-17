@@ -10,6 +10,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+app.use("/utils", express.static("utils"));
+
 
 // ===============================================
 // CONFIGURAÇÃO
@@ -31,7 +33,7 @@ app.use(cors({
 }));
 
 // Log de todas as requisições
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   console.log(`📨 ${req.method} ${req.path}`);
   if (req.body && Object.keys(req.body).length > 0) {
     console.log("   Body keys:", Object.keys(req.body));
