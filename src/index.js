@@ -215,20 +215,10 @@ app.listen(PORT, () => {
   
   if (isConnected()) {
     console.log("✅ Banco de dados conectado");
-  } else {
-    console.log("⚠️  Banco de dados não conectado!");
   }
   
   // Limpeza periódica de tokens expirados (a cada 1 hora)
   setInterval(() => {
     cleanupExpired();
   }, 3600000);
-  
-  console.log("\n📝 OAuth Endpoints:");
-  console.log("   POST /oauth/register");
-  console.log("   GET  /oauth/authorize");
-  console.log("   POST /oauth/authorize");
-  console.log("   POST /oauth/token");
-  console.log("   POST /oauth/revoke");
-  console.log("\n");
 });

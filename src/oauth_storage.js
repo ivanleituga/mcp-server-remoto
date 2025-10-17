@@ -168,7 +168,7 @@ async function getToken(token) {
 }
 
 async function revokeToken(token) {
-  const query = "UPDATE mcp_tokens SET revoked = true WHERE token = $1";
+  const query = "DELETE FROM mcp_tokens WHERE token = $1";
   await pool.query(query, [token]);
 }
 
@@ -185,29 +185,32 @@ async function cleanupExpired() {
   console.log("\n🧹 Iniciando limpeza OAuth...");
 
   try {
-    const tokensResult = await pool.query(`
+    // 1. Access tokens expirados
+    const expiredTokens = await pool.query(`
       DELETE FROM mcp_tokens 
       WHERE expires_at IS NOT NULL 
         AND expires_at < CURRENT_TIMESTAMP
       RETURNING token
     `);
     
-    const orphanTokensResult = await pool.query(`
+    // 2. Refresh tokens nunca usados após 24h
+    const unusedRefresh = await pool.query(`
       DELETE FROM mcp_tokens 
       WHERE token_type = 'refresh'
-        AND created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
+        AND revoked = false
+        AND created_at < CURRENT_TIMESTAMP - INTERVAL '1 day'
         AND NOT EXISTS (
           SELECT 1 FROM mcp_tokens t2 
           WHERE t2.client_id = mcp_tokens.client_id 
             AND t2.user_id = mcp_tokens.user_id
             AND t2.token_type = 'access'
-            AND t2.created_at > CURRENT_TIMESTAMP - INTERVAL '1 day'
+            AND t2.created_at > mcp_tokens.created_at
         )
       RETURNING token
     `);
 
-    console.log(`   🗑️  Tokens expirados: ${tokensResult.rowCount}`);
-    console.log(`   🗑️  Refresh órfãos: ${orphanTokensResult.rowCount}`);
+    console.log(`   🗑️  Access tokens expirados: ${expiredTokens.rowCount}`);
+    console.log(`   🗑️  Refresh tokens nunca usados (>24h): ${unusedRefresh.rowCount}`);
     console.log("   ✅ Limpeza concluída\n");
 
   } catch (error) {

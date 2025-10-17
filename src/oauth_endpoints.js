@@ -81,7 +81,7 @@ function setupOAuthEndpoints(app) {
       issuer: config.SERVER_URL,
       authorization_endpoint: `${config.SERVER_URL}/oauth/authorize`,
       token_endpoint: `${config.SERVER_URL}/oauth/token`,
-      registration_endpoint: `${config.SERVER_URL}/oauth/register`,  // ✅ DCR
+      registration_endpoint: `${config.SERVER_URL}/oauth/register`,
       revocation_endpoint: `${config.SERVER_URL}/oauth/revoke`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
@@ -125,43 +125,39 @@ function setupOAuthEndpoints(app) {
       }
       
       if (!Array.isArray(redirect_uris) || redirect_uris.length === 0) {
-        console.log("   ❌ Redirect URIs ausente ou inválido");
+        console.log("   ❌ redirect_uris inválido");
         return res.status(400).json({
-          error: "invalid_redirect_uri",
-          error_description: "At least one redirect_uri is required"
+          error: "invalid_client_metadata",
+          error_description: "redirect_uris must be a non-empty array"
         });
       }
       
-      const client_id = `client_${uuidv4()}`;
+      const client_id = uuidv4();
       
-      await createClient({
+      const client = await createClient({
         client_id,
         client_name,
         redirect_uris,
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
         scope: scope || "mcp"
       });
       
-      console.log(`   ✅ Client registered: ${client_id}`);
-      console.log(`      Name: ${client_name}`);
-      console.log(`      Redirect URIs: ${redirect_uris.join(", ")}`);
+      console.log(`   ✅ Cliente registrado: ${client_id}`);
       
       res.status(201).json({
-        client_id,
-        client_name,
-        redirect_uris,
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
+        client_id: client.client_id,
+        client_name: client.client_name,
+        redirect_uris: client.redirect_uris,
+        grant_types: client.grant_types,
+        response_types: client.response_types,
         token_endpoint_auth_method: "none",
-        scope: scope || "mcp"
+        scope: client.scope
       });
       
     } catch (error) {
-      console.error("   ❌ Erro ao registrar cliente:", error.message);
+      console.error("   ❌ Erro no registro:", error.message);
       res.status(500).json({
         error: "server_error",
-        error_description: "Internal error during client registration"
+        error_description: "Internal server error"
       });
     }
   });
@@ -174,237 +170,288 @@ function setupOAuthEndpoints(app) {
     const {
       client_id,
       redirect_uri,
-      response_type,
-      scope,
       state,
       code_challenge,
-      code_challenge_method
+      code_challenge_method = "S256",
+      scope = "mcp"
     } = req.query;
     
     console.log("\n🔐 GET /oauth/authorize");
     console.log(`   Client ID: ${client_id}`);
     console.log(`   Redirect URI: ${redirect_uri}`);
-    console.log(`   Response Type: ${response_type}`);
-    console.log(`   Scope: ${scope}`);
-    console.log(`   State: ${state}`);
-    console.log(`   PKCE: ${code_challenge ? "Yes" : "No"}`);
-    console.log(`   PKCE Method: ${code_challenge_method || "none"}`);
+    console.log(`   PKCE: ${code_challenge ? "✅" : "❌"}`);
     
     try {
+      if (!client_id || !redirect_uri) {
+        return res.status(400).json({
+          error: "invalid_request",
+          error_description: "client_id and redirect_uri are required"
+        });
+      }
+      
+      if (!code_challenge) {
+        return res.status(400).json({
+          error: "invalid_request",
+          error_description: "code_challenge is required (PKCE)"
+        });
+      }
+      
       const client = await getClientById(client_id);
       
       if (!client) {
         console.log(`   ❌ Client não encontrado: ${client_id}`);
-        return res.status(400).send(`
-          <h1>Client Not Found</h1>
-          <p>The client_id "${client_id}" is not registered.</p>
-          <p>Please contact the administrator to register this client.</p>
-        `);
+        return res.status(400).json({
+          error: "invalid_client",
+          error_description: "Client not found"
+        });
       }
       
-      if (!client.redirect_uris.includes(redirect_uri)) {
-        console.log("   ❌ Redirect URI inválido");
-        return res.status(400).send("Invalid redirect_uri");
+      const validRedirect = client.redirect_uris.includes(redirect_uri);
+      if (!validRedirect) {
+        console.log(`   ❌ Redirect URI inválido: ${redirect_uri}`);
+        return res.status(400).json({
+          error: "invalid_request",
+          error_description: "Invalid redirect_uri"
+        });
       }
       
-      console.log("   📄 Mostrando página de login & aprovação unificada...");
-      res.send(getUnifiedAuthPage(client, req.query));
+      console.log("   ✅ Mostrando página de login/autorização");
+      
+      res.send(getUnifiedAuthPage(client, {
+        client_id,
+        redirect_uri,
+        state,
+        code_challenge,
+        code_challenge_method,
+        scope
+      }));
       
     } catch (error) {
-      console.error("❌ Erro ao processar autorização:", error.message);
-      res.status(500).send("Internal error");
+      console.error("   ❌ Erro:", error.message);
+      res.status(500).json({
+        error: "server_error",
+        error_description: "Internal server error"
+      });
     }
   });
-  
-  // -----------------------------------------------
-  // AUTHORIZATION ENDPOINT (POST)
-  // -----------------------------------------------
 
+  // -----------------------------------------------
+  // AUTHORIZATION ENDPOINT (POST) - Login + Approve
+  // -----------------------------------------------
+  
   app.post("/oauth/authorize", async (req, res) => {
     const {
-      client_id,
-      redirect_uri,
-      scope,
-      state,
-      code_challenge,
-      code_challenge_method,
       username,
       password,
-      action
+      action,
+      client_id,
+      redirect_uri,
+      state,
+      code_challenge,
+      code_challenge_method = "S256",
+      scope = "mcp"
     } = req.body;
-  
+    
     console.log("\n🔐 POST /oauth/authorize");
     console.log(`   Action: ${action}`);
-    console.log(`   Client: ${client_id}`);
     console.log(`   Username: ${username}`);
-  
+    
     try {
-      const redirectUrl = new URL(redirect_uri);
-    
       if (action === "deny") {
-        console.log("   ❌ Usuário NEGOU autorização");
-        redirectUrl.searchParams.set("error", "access_denied");
-        redirectUrl.searchParams.set("error_description", "User denied authorization");
-        if (state) redirectUrl.searchParams.set("state", state);
-        return res.redirect(redirectUrl.toString());
+        console.log("   ❌ Usuário negou autorização");
+        const errorUrl = new URL(redirect_uri);
+        errorUrl.searchParams.set("error", "access_denied");
+        errorUrl.searchParams.set("error_description", "User denied authorization");
+        if (state) errorUrl.searchParams.set("state", state);
+        return res.redirect(errorUrl.toString());
       }
-    
-      const validation = await validateUser(username, password);
-    
-      if (!validation.valid) {
-        console.log(`   ❌ Validação falhou: ${validation.error}`);
+      
+      const userValidation = await validateUser(username, password);
+      
+      if (!userValidation.valid) {
+        console.log(`   ❌ Validação falhou: ${userValidation.error}`);
+        
         const client = await getClientById(client_id);
-        return res.send(getUnifiedAuthPage(client, req.body, validation.error));
+        return res.send(getUnifiedAuthPage(client, {
+          client_id,
+          redirect_uri,
+          state,
+          code_challenge,
+          code_challenge_method,
+          scope
+        }, userValidation.error));
       }
-    
-      console.log(`   ✅ Usuário autenticado: ${validation.username}`);
-      console.log("   ✅ Usuário APROVOU autorização");
-    
-      const authCode = `code_${uuidv4()}`;
-    
+      
+      const code = crypto.randomBytes(32).toString("base64url");
+      
       createAuthCode({
-        code: authCode,
+        code,
         client_id,
-        user_id: validation.userId,
-        username: validation.username,
+        user_id: userValidation.userId,
         redirect_uri,
-        scope: scope || "mcp",
+        scope,
         code_challenge,
-        code_challenge_method: code_challenge_method || "S256",
+        code_challenge_method,
         expiresAt: Date.now() + config.CODE_EXPIRY
       });
-    
-      console.log(`   🎫 Código autorizado: ${authCode.substring(0, 20)}...`);
-    
-      redirectUrl.searchParams.set("code", authCode);
-      if (state) {
-        redirectUrl.searchParams.set("state", state);
-      }
-    
-      console.log(`   ↪️  Redirecionando para: ${redirectUrl.toString()}`);
-      res.redirect(redirectUrl.toString());
-    
+      
+      console.log(`   ✅ Authorization code gerado: ${code.substring(0, 20)}...`);
+      console.log(`   📤 Redirecionando para: ${redirect_uri}`);
+      
+      const successUrl = new URL(redirect_uri);
+      successUrl.searchParams.set("code", code);
+      if (state) successUrl.searchParams.set("state", state);
+      
+      res.redirect(successUrl.toString());
+      
     } catch (error) {
-      console.error("❌ Erro ao processar aprovação:", error.message);
-      res.status(500).send("Internal error");
+      console.error("   ❌ Erro:", error.message);
+      res.status(500).json({
+        error: "server_error",
+        error_description: "Internal server error"
+      });
     }
   });
-  
+
   // -----------------------------------------------
   // TOKEN ENDPOINT
   // -----------------------------------------------
   
   app.post("/oauth/token", async (req, res) => {
-    const { grant_type, code, code_verifier, refresh_token } = req.body;
+    const {
+      grant_type,
+      code,
+      client_id,
+      code_verifier,
+      refresh_token
+    } = req.body;
     
     console.log("\n🎫 POST /oauth/token");
-    console.log(`   Body keys: ${JSON.stringify(Object.keys(req.body))}`);
-    console.log("🎫 POST /oauth/token");
     console.log(`   Grant Type: ${grant_type}`);
     
     try {
+      // -----------------------------------------------
+      // AUTHORIZATION CODE GRANT
+      // -----------------------------------------------
+      
       if (grant_type === "authorization_code") {
-        const authData = getAuthCode(code);
+        console.log("🔑 Authorization Code Grant");
         
-        if (!authData) {
-          console.log("   ❌ Código inválido ou expirado");
+        if (!code || !client_id) {
+          console.log("   ❌ Parâmetros ausentes");
+          return res.status(400).json({
+            error: "invalid_request",
+            error_description: "code and client_id are required"
+          });
+        }
+        
+        const codeData = getAuthCode(code);
+        
+        if (!codeData) {
+          console.log(`   ❌ Authorization code inválido ou expirado: ${code.substring(0, 20)}...`);
           return res.status(400).json({
             error: "invalid_grant",
             error_description: "Invalid or expired authorization code"
           });
         }
         
-        if (authData.code_challenge) {
-          if (!code_verifier) {
-            console.log("   ❌ PKCE verifier ausente");
-            return res.status(400).json({
-              error: "invalid_request",
-              error_description: "PKCE code_verifier required"
-            });
-          }
-          
-          const valid = validatePKCE(
-            code_verifier,
-            authData.code_challenge,
-            authData.code_challenge_method
-          );
-          
-          if (!valid) {
-            console.log("   ❌ PKCE verificação falhou");
-            return res.status(400).json({
-              error: "invalid_grant",
-              error_description: "PKCE verification failed"
-            });
-          }
-          
-          console.log("   ✅ PKCE validado com sucesso");
+        if (codeData.client_id !== client_id) {
+          console.log("   ❌ Client ID mismatch");
+          consumeAuthCode(code);
+          return res.status(400).json({
+            error: "invalid_grant",
+            error_description: "Authorization code was issued to another client"
+          });
         }
         
-        const accessToken = `mcp_${uuidv4()}`;
-        const refreshToken = `refresh_${uuidv4()}`;
+        if (!code_verifier) {
+          console.log("   ❌ code_verifier ausente");
+          consumeAuthCode(code);
+          return res.status(400).json({
+            error: "invalid_request",
+            error_description: "code_verifier is required for PKCE"
+          });
+        }
+        
+        const pkceValid = validatePKCE(
+          code_verifier,
+          codeData.code_challenge,
+          codeData.code_challenge_method
+        );
+        
+        if (!pkceValid) {
+          console.log("   ❌ PKCE validation failed");
+          consumeAuthCode(code);
+          return res.status(400).json({
+            error: "invalid_grant",
+            error_description: "Invalid code_verifier"
+          });
+        }
+        
+        consumeAuthCode(code);
+        
+        const accessToken = crypto.randomBytes(32).toString("base64url");
+        const refreshToken = crypto.randomBytes(32).toString("base64url");
         
         await createToken({
           token: accessToken,
           token_type: "access",
-          client_id: authData.client_id,
-          user_id: authData.user_id,
-          scope: authData.scope,
+          client_id: codeData.client_id,
+          user_id: codeData.user_id,
+          scope: codeData.scope,
           expiresAt: Date.now() + config.TOKEN_EXPIRY
         });
         
         await createToken({
           token: refreshToken,
           token_type: "refresh",
-          client_id: authData.client_id,
-          user_id: authData.user_id,
-          scope: authData.scope,
+          client_id: codeData.client_id,
+          user_id: codeData.user_id,
+          scope: codeData.scope,
           expiresAt: null
         });
         
-        consumeAuthCode(code);
+        console.log(`   ✅ Access token: ${accessToken.substring(0, 20)}...`);
+        console.log(`   ✅ Refresh token: ${refreshToken.substring(0, 20)}...`);
         
-        console.log("   ✅ Tokens gerados:");
-        console.log(`      Access: ${accessToken.substring(0, 20)}...`);
-        console.log(`      Refresh: ${refreshToken.substring(0, 20)}...`);
-        console.log(`      User: ${authData.username}`);
-        
-        res.json({
+        return res.json({
           access_token: accessToken,
-          token_type: "Bearer",
-          expires_in: Math.floor(config.TOKEN_EXPIRY / 1000),
+          token_type: "bearer",
+          expires_in: config.TOKEN_EXPIRY / 1000,
           refresh_token: refreshToken,
-          scope: authData.scope
+          scope: codeData.scope
         });
+      }
+      
+      // -----------------------------------------------
+      // REFRESH TOKEN GRANT (COM TOKEN ROTATION)
+      // -----------------------------------------------
+      
+      if (grant_type === "refresh_token") {
+        console.log("🔄 Refresh Token Grant");
         
-      } else if (grant_type === "refresh_token") {
+        if (!refresh_token) {
+          console.log("   ❌ refresh_token ausente");
+          return res.status(400).json({
+            error: "invalid_request",
+            error_description: "refresh_token is required"
+          });
+        }
+
         const refreshData = await getToken(refresh_token);
         
         if (!refreshData || refreshData.token_type !== "refresh") {
-          console.log("   ❌ Refresh token inválido");
-          return res.status(401)
-            .header("WWW-Authenticate", 
-              "Bearer realm=\"MCP Server\", " +
-              "error=\"invalid_token\", " +
-              "error_description=\"Refresh token is invalid or expired\"")
-            .json({
-              error: "invalid_grant",
-              error_description: "Refresh token is invalid or expired"
-            });
-        }
-        
-        if (refreshData.revoked) {
-          console.log("   ❌ Refresh token foi revogado");
+          console.log(`   ❌ Refresh token inválido: ${refresh_token.substring(0, 20)}...`);
           return res.status(401)
             .header("WWW-Authenticate", 
               "Bearer realm=\"MCP Server\", error=\"invalid_token\"")
             .json({
-              error: "invalid_grant",
-              error_description: "Refresh token has been revoked"
+              error: "invalid_token",
+              error_description: "Invalid or expired refresh token"
             });
         }
-        
-        const newAccessToken = `mcp_${uuidv4()}`;
-        
+
+        const newAccessToken = crypto.randomBytes(32).toString("base64url");
         await createToken({
           token: newAccessToken,
           token_type: "access",
@@ -413,40 +460,60 @@ function setupOAuthEndpoints(app) {
           scope: refreshData.scope,
           expiresAt: Date.now() + config.TOKEN_EXPIRY
         });
-        
-        console.log(`   ✅ Token renovado: ${newAccessToken.substring(0, 20)}...`);
-        console.log(`      User: ${refreshData.user_username}`);
-        console.log(`      🔄 REUSANDO refresh token: ${refresh_token.substring(0, 20)}...`);
-        
-        res.json({
-          access_token: newAccessToken,
-          token_type: "Bearer",
-          expires_in: Math.floor(config.TOKEN_EXPIRY / 1000),
-          refresh_token: refresh_token,
-          scope: refreshData.scope
+
+        const newRefreshToken = crypto.randomBytes(32).toString("base64url");
+        await createToken({
+          token: newRefreshToken,
+          token_type: "refresh",
+          client_id: refreshData.client_id,
+          user_id: refreshData.user_id,
+          scope: refreshData.scope,
+          expiresAt: null
         });
-        
-      } else {
-        console.log("   ❌ Grant type não suportado:", grant_type);
-        res.status(400).json({
-          error: "unsupported_grant_type"
+
+        await revokeToken(refresh_token);
+
+        console.log("   ✅ Token rotation concluída");
+        console.log(`   🔑 Novo access token: ${newAccessToken.substring(0, 20)}...`);
+        console.log(`   🔑 Novo refresh token: ${newRefreshToken.substring(0, 20)}...`);
+        console.log(`   🗑️  Refresh token antigo DELETADO: ${refresh_token.substring(0, 20)}...`);
+
+        return res.json({
+          access_token: newAccessToken,
+          token_type: "bearer",
+          expires_in: config.TOKEN_EXPIRY / 1000,
+          refresh_token: newRefreshToken,
+          scope: refreshData.scope
         });
       }
       
+      // -----------------------------------------------
+      // GRANT TYPE NÃO SUPORTADO
+      // -----------------------------------------------
+      
+      console.log(`   ❌ Grant type não suportado: ${grant_type}`);
+      return res.status(400).json({
+        error: "unsupported_grant_type",
+        error_description: `Grant type "${grant_type}" is not supported`
+      });
+      
     } catch (error) {
-      console.error("❌ Erro no token endpoint:", error.message);
-      res.status(500).json({ error: "internal_error" });
+      console.error("   ❌ Erro no token endpoint:", error.message);
+      return res.status(500).json({
+        error: "server_error",
+        error_description: "Internal server error"
+      });
     }
   });
-  
+
   // -----------------------------------------------
-  // TOKEN REVOCATION
+  // REVOCATION ENDPOINT
   // -----------------------------------------------
   
   app.post("/oauth/revoke", async (req, res) => {
     const { token } = req.body;
     
-    console.log("\n🗑️  POST /oauth/revoke");
+    console.log("\n🔴 POST /oauth/revoke");
     console.log(`   Token: ${token ? token.substring(0, 20) + "..." : "[AUSENTE]"}`);
     
     try {
@@ -454,9 +521,9 @@ function setupOAuthEndpoints(app) {
       
       if (tokenData) {
         await revokeToken(token);
-        console.log("   ✅ Token revogado");
+        console.log("   ✅ Token deletado");
       } else {
-        console.log("   ⚠️  Token não encontrado (já revogado ou inválido)");
+        console.log("   ⚠️  Token não encontrado (já deletado ou inválido)");
       }
       
       res.status(200).send();
