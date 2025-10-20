@@ -72,106 +72,67 @@ app.get("/health", async (_req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     database: dbStatus ? "connected" : "disconnected",
-    tools: toolsCount,
-    server: SERVER_URL
+    sessions: sessionManager.count()
   });
 });
 
 // ===============================================
-// ENDPOINT MCP
+// MCP ENDPOINTS
 // ===============================================
 
 app.post("/mcp", validateToken, async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
-  const isInit = req.body?.method === "initialize";
-  
-  console.log("\n🔄 MCP Request:");
-  console.log(`   Method: ${req.body?.method || "unknown"}`);
-  console.log(`   Session: ${sessionId || "new"}`);
-  
-  if (req.body?.method === "tools/call") {
-    console.log("   🔧 Tool Call Details:");
-    console.log(`      Name: ${req.body?.params?.name}`);
-    console.log("      Arguments:", req.body?.params?.arguments);
-  }
-  
   try {
-    if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
-      const newSessionId = sessionId || crypto.randomUUID();
+    const sessionId = req.headers["x-session-id"] || crypto.randomUUID();
+    
+    console.log(`\n📡 POST /mcp - Session: ${sessionId}`);
+    console.log(`   User: ${req.oauth.user}`);
+    console.log(`   Client: ${req.oauth.client_id}`);
+    
+    let transport = sessionManager.get(sessionId);
+    
+    if (!transport) {
+      console.log(`   🆕 Criando nova sessão: ${sessionId}`);
       
-      console.log(`🆕 Criando nova sessão: ${newSessionId}`);
-      
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => newSessionId,
-        onsessioninitialized: (sid) => {
-          console.log(`✅ Sessão inicializada: ${sid}`);
-          sessionManager.add(sid, transport);
-        }
+      transport = new StreamableHTTPServerTransport({
+        request: req,
+        response: res,
+        sessionId
       });
+      
+      sessionManager.add(sessionId, transport);
       
       await mcpServer.connect(transport);
       
-      res.setHeader("Mcp-Session-Id", newSessionId);
+      console.log(`   ✅ Sessão conectada: ${sessionId}`);
+      console.log(`   📊 Total de sessões ativas: ${sessionManager.count()}`);
+    } else {
+      console.log(`   🔄 Reutilizando sessão existente: ${sessionId}`);
       
-      await transport.handleRequest(req, res, req.body);
-      return;
+      await transport.handleRequest(req, res);
     }
-    
-    const transport = sessionManager.get(sessionId);
-    if (transport) {
-      console.log(`♻️ Reusando sessão: ${sessionId}`);
-      
-      await transport.handleRequest(req, res, req.body);
-      return;
-    }
-    
-    console.error(`❌ Sessão inválida: ${sessionId}`);
-    res.status(400).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Invalid session - please reinitialize"
-      },
-      id: req.body?.id || null
-    });
     
   } catch (error) {
-    console.error("❌ Erro no MCP:", error);
-    console.error("   Stack:", error.stack);
-    
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32603,
-        message: `Internal error: ${error.message}`
-      },
-      id: req.body?.id || null
-    });
+    console.error("   ❌ Erro no MCP endpoint:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "internal_error",
+        message: error.message
+      });
+    }
   }
 });
 
-// ===============================================
-// DELETE /mcp - Cleanup de Sessão
-// ===============================================
-
 app.delete("/mcp", validateToken, async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
+  const sessionId = req.headers["x-session-id"];
   
-  console.log("\n🗑️  DELETE /mcp");
-  console.log(`   Session: ${sessionId || "none"}`);
-  
-  if (!sessionId) {
-    console.log("   ⚠️  Nenhuma sessão especificada");
-    return res.status(400).json({
-      error: "missing_session_id",
-      message: "Header Mcp-Session-Id required"
-    });
-  }
+  console.log(`\n🗑️  DELETE /mcp - Session: ${sessionId || "[SEM SESSION-ID]"}`);
+  console.log(`   User: ${req.oauth.user}`);
   
   try {
-    if (sessionManager.exists(sessionId)) {
+    if (sessionId && sessionManager.exists(sessionId)) {
       const transport = sessionManager.get(sessionId);
-      if (transport) {
+      
+      if (transport && transport.close) {
         await transport.close();
         console.log(`   ✅ Transport fechado: ${sessionId}`);
       }
@@ -218,8 +179,47 @@ app.listen(PORT, () => {
     console.log("✅ Banco de dados conectado");
   }
   
-  // Limpeza periódica de tokens expirados (a cada 1 hora)
+  // Limpeza periódica de tokens expirados (a cada 6 horas)
   setInterval(() => {
     cleanupExpired();
-  }, 3600000);
+  }, 6 * 60 * 60 * 1000);
+  
+  // Limpeza de sessões MCP inativas (a cada 30 minutos)
+  setInterval(() => {
+    sessionManager.cleanup(3600000); // Remove sessões inativas há mais de 1 hora
+  }, 1800000);
+});
+
+// ===============================================
+// GRACEFUL SHUTDOWN
+// ===============================================
+
+// Graceful shutdown ao receber SIGTERM (Render, Docker, etc)
+process.on("SIGTERM", async () => {
+  console.log("\n⚠️  SIGTERM recebido. Encerrando servidor...");
+  
+  try {
+    await sessionManager.closeAll();
+    console.log("✅ Todas as sessões MCP fechadas");
+    
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Erro ao fechar sessões:", error.message);
+    process.exit(1);
+  }
+});
+
+// Graceful shutdown ao receber SIGINT (Ctrl+C local)
+process.on("SIGINT", async () => {
+  console.log("\n⚠️  SIGINT recebido (Ctrl+C). Encerrando servidor...");
+  
+  try {
+    await sessionManager.closeAll();
+    console.log("✅ Todas as sessões MCP fechadas");
+    
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Erro ao fechar sessões:", error.message);
+    process.exit(1);
+  }
 });

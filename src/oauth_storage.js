@@ -1,5 +1,7 @@
 const { pool } = require("./database");
 
+const REFRESH_TOKEN_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 dias
+
 // ===============================================
 // AUTENTICAÇÃO DE USUÁRIOS
 // ===============================================
@@ -68,7 +70,7 @@ async function validateUser(username, password) {
 }
 
 // ===============================================
-// CLIENTS (Clientes OAuth Registrados)
+// CLIENTS (MCP Clients Registrados)
 // ===============================================
 
 async function createClient(clientData) {
@@ -126,6 +128,11 @@ async function createToken(tokenData) {
     expiresAt
   } = tokenData;
 
+  let finalExpiresAt = expiresAt;
+  if (token_type === "refresh" && !expiresAt) {
+    finalExpiresAt = Date.now() + REFRESH_TOKEN_EXPIRY;
+  }
+
   const query = `
     INSERT INTO mcp_tokens (
       token, 
@@ -145,7 +152,7 @@ async function createToken(tokenData) {
     client_id,
     user_id,
     scope,
-    expiresAt ? new Date(expiresAt) : null
+    finalExpiresAt ? new Date(finalExpiresAt) : null
   ]);
 
   return result.rows[0];
@@ -185,32 +192,18 @@ async function cleanupExpired() {
   console.log("\n🧹 Iniciando limpeza OAuth...");
 
   try {
-    // 1. Access tokens expirados
     const expiredTokens = await pool.query(`
       DELETE FROM mcp_tokens 
       WHERE expires_at IS NOT NULL 
         AND expires_at < CURRENT_TIMESTAMP
-      RETURNING token
+      RETURNING token_type
     `);
     
-    // 2. Refresh tokens nunca usados após 24h
-    const unusedRefresh = await pool.query(`
-      DELETE FROM mcp_tokens 
-      WHERE token_type = 'refresh'
-        AND revoked = false
-        AND created_at < CURRENT_TIMESTAMP - INTERVAL '1 day'
-        AND NOT EXISTS (
-          SELECT 1 FROM mcp_tokens t2 
-          WHERE t2.client_id = mcp_tokens.client_id 
-            AND t2.user_id = mcp_tokens.user_id
-            AND t2.token_type = 'access'
-            AND t2.created_at > mcp_tokens.created_at
-        )
-      RETURNING token
-    `);
+    const accessCount = expiredTokens.rows.filter(r => r.token_type === "access").length;
+    const refreshCount = expiredTokens.rows.filter(r => r.token_type === "refresh").length;
 
-    console.log(`   🗑️  Access tokens expirados: ${expiredTokens.rowCount}`);
-    console.log(`   🗑️  Refresh tokens nunca usados (>24h): ${unusedRefresh.rowCount}`);
+    console.log(`   🗑️  Access tokens expirados: ${accessCount}`);
+    console.log(`   🗑️  Refresh tokens expirados: ${refreshCount}`);
     console.log("   ✅ Limpeza concluída\n");
 
   } catch (error) {

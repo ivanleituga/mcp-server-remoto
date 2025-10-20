@@ -16,8 +16,8 @@ const {
 
 const config = {
   SERVER_URL: process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`,
-  TOKEN_EXPIRY: 3600000,  // 1 hora
-  CODE_EXPIRY: 120000     // 2 minutos
+  TOKEN_EXPIRY: 12 * 60 * 60 * 1000,  // 12 horas
+  CODE_EXPIRY: 120000  // 2 minutos
 };
 
 // ===============================================
@@ -327,7 +327,7 @@ function setupOAuthEndpoints(app) {
     } = req.body;
     
     console.log("\n🎫 POST /oauth/token");
-    console.log(`   Grant Type: ${grant_type}`);
+    console.log(`   Grant type: ${grant_type}`);
     
     try {
       // -----------------------------------------------
@@ -337,58 +337,35 @@ function setupOAuthEndpoints(app) {
       if (grant_type === "authorization_code") {
         console.log("🔑 Authorization Code Grant");
         
-        if (!code || !client_id) {
-          console.log("   ❌ Parâmetros ausentes");
+        if (!code || !client_id || !code_verifier) {
+          console.log("   ❌ Parâmetros faltando");
           return res.status(400).json({
             error: "invalid_request",
-            error_description: "code and client_id are required"
+            error_description: "code, client_id, and code_verifier are required"
           });
         }
         
         const codeData = getAuthCode(code);
         
-        if (!codeData) {
-          console.log(`   ❌ Authorization code inválido ou expirado: ${code.substring(0, 20)}...`);
+        if (!codeData || codeData.client_id !== client_id) {
+          console.log("   ❌ Authorization code inválido");
           return res.status(400).json({
             error: "invalid_grant",
             error_description: "Invalid or expired authorization code"
           });
         }
         
-        if (codeData.client_id !== client_id) {
-          console.log("   ❌ Client ID mismatch");
+        if (!validatePKCE(code_verifier, codeData.code_challenge, codeData.code_challenge_method)) {
+          console.log("   ❌ PKCE validation falhou");
           consumeAuthCode(code);
           return res.status(400).json({
             error: "invalid_grant",
-            error_description: "Authorization code was issued to another client"
-          });
-        }
-        
-        if (!code_verifier) {
-          console.log("   ❌ code_verifier ausente");
-          consumeAuthCode(code);
-          return res.status(400).json({
-            error: "invalid_request",
-            error_description: "code_verifier is required for PKCE"
-          });
-        }
-        
-        const pkceValid = validatePKCE(
-          code_verifier,
-          codeData.code_challenge,
-          codeData.code_challenge_method
-        );
-        
-        if (!pkceValid) {
-          console.log("   ❌ PKCE validation failed");
-          consumeAuthCode(code);
-          return res.status(400).json({
-            error: "invalid_grant",
-            error_description: "Invalid code_verifier"
+            error_description: "PKCE validation failed"
           });
         }
         
         consumeAuthCode(code);
+        console.log("   ✅ PKCE válido");
         
         const accessToken = crypto.randomBytes(32).toString("base64url");
         const refreshToken = crypto.randomBytes(32).toString("base64url");
