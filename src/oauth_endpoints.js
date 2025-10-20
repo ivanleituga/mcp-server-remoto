@@ -17,7 +17,7 @@ const {
 const config = {
   SERVER_URL: process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`,
   TOKEN_EXPIRY: 12 * 60 * 60 * 1000,  // 12 horas
-  CODE_EXPIRY: 120000  // 2 minutos
+  CODE_EXPIRY: 120000                  // 2 minutos
 };
 
 // ===============================================
@@ -379,13 +379,14 @@ function setupOAuthEndpoints(app) {
           expiresAt: Date.now() + config.TOKEN_EXPIRY
         });
         
+        // CORREÇÃO: Não passar expiresAt, deixar oauth_storage.js adicionar automaticamente
         await createToken({
           token: refreshToken,
           token_type: "refresh",
           client_id: codeData.client_id,
           user_id: codeData.user_id,
-          scope: codeData.scope,
-          expiresAt: null
+          scope: codeData.scope
+          // expiresAt removido - oauth_storage.js vai adicionar 30 dias
         });
         
         console.log(`   ✅ Access token: ${accessToken.substring(0, 20)}...`);
@@ -439,13 +440,14 @@ function setupOAuthEndpoints(app) {
         });
 
         const newRefreshToken = crypto.randomBytes(32).toString("base64url");
+        // CORREÇÃO: Não passar expiresAt, deixar oauth_storage.js adicionar automaticamente
         await createToken({
           token: newRefreshToken,
           token_type: "refresh",
           client_id: refreshData.client_id,
           user_id: refreshData.user_id,
-          scope: refreshData.scope,
-          expiresAt: null
+          scope: refreshData.scope
+          // expiresAt removido - oauth_storage.js vai adicionar 30 dias
         });
 
         await revokeToken(refresh_token);
