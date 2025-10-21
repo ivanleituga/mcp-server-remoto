@@ -31,7 +31,9 @@ const tools = [
     Formatting Rules:
     - Use ILIKE and unaccent() for any string comparisons (case-insensitive, accent-insensitive).
     - Do not include semicolons.
-    - Do not generate DDL or DML statements (e.g., CREATE, UPDATE, DELETE, INSERT).`,
+    - Do not generate DDL or DML statements (e.g., CREATE, UPDATE, DELETE, INSERT).
+    
+    CRITICAL: Only SELECT queries are allowed. Any attempt to modify data will be blocked.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -139,10 +141,67 @@ const tools = [
   }
 ];
 
-async function executeTool(toolName, args = {}, queryFn) {
+// ===============================================
+// VALIDAÇÃO DE SQL - ACEITA APENAS SELECT
+// ===============================================
+
+function validateSelectQuery(sql) {
+  // Remove comentários SQL
+  const cleanSql = sql
+    .replace(/--.*$/gm, "")  // Comentários de linha
+    .replace(/\/\*[\s\S]*?\*\//g, "")  // Comentários de bloco
+    .trim();
+
+  // Verifica se está vazio após limpeza
+  if (!cleanSql) {
+    throw new Error("Query SQL vazia após remover comentários");
+  }
+
+  // Normaliza para uppercase e remove espaços múltiplos
+  const normalized = cleanSql.toUpperCase().replace(/\s+/g, " ");
+
+  // Lista de comandos SQL proibidos (DDL, DML, DCL)
+  const forbiddenCommands = [
+    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+    "TRUNCATE", "REPLACE", "MERGE", "GRANT", "REVOKE",
+    "COMMIT", "ROLLBACK", "SAVEPOINT", "EXEC", "EXECUTE",
+    "CALL", "DO", "LOAD", "COPY", "IMPORT"
+  ];
+
+  // Verifica se começa com SELECT (pode ter WITH antes)
+  const startsWithSelect = normalized.startsWith("SELECT") || 
+                          normalized.startsWith("WITH");
+
+  if (!startsWithSelect) {
+    throw new Error("BLOQUEADO: Apenas queries SELECT são permitidas");
+  }
+
+  // Verifica se contém comandos proibidos em qualquer posição
+  // Usa word boundary para evitar falsos positivos (ex: "delete" em nome de coluna)
+  for (const cmd of forbiddenCommands) {
+    const regex = new RegExp(`\\b${cmd}\\b`, "i");
+    if (regex.test(cleanSql)) {
+      throw new Error(`BLOQUEADO: Comando SQL '${cmd}' não é permitido. Apenas SELECT é aceito.`);
+    }
+  }
+
+  // Verifica se contém ponto-e-vírgula seguido de outro comando (SQL injection)
+  if (/;[\s\S]+/g.test(cleanSql)) {
+    throw new Error("BLOQUEADO: Múltiplas queries não são permitidas");
+  }
+
+  return true;
+}
+
+// ===============================================
+// EXECUÇÃO DE TOOLS
+// ===============================================
+
+async function executeTool(toolName, args = {}, queryFn, accessToken) {
   console.log("\n🔨 executeTool chamado:");
   console.log("   Tool:", toolName);
   console.log("   Args recebidos:", JSON.stringify(args, null, 2));
+  console.log(`   Access Token: ${accessToken ? accessToken.substring(0, 20) + "..." : "[AUSENTE]"}`);
   
   try {
     switch (toolName) {
@@ -163,8 +222,15 @@ async function executeTool(toolName, args = {}, queryFn) {
       if (!sql) {
         throw new Error(`SQL query não fornecida. Recebido: ${JSON.stringify(args)}`);
       }
-        
+
       try {
+        // ==========================================
+        // VALIDAÇÃO DE SEGURANÇA - APENAS SELECT
+        // ==========================================
+        console.log("   🛡️  Validando query SQL...");
+        validateSelectQuery(sql);
+        console.log("   ✅ Query validada: SELECT permitido");
+        
         console.log("   📊 Executando query no banco...");
         const data = await queryFn(sql);
         console.log(`   ✅ Query executada: ${data.length} registros`);
@@ -196,16 +262,34 @@ async function executeTool(toolName, args = {}, queryFn) {
       if (!wellName) {
         throw new Error("Nome do poço não fornecido");
       }
+
+      if (!accessToken) {
+        throw new Error("Access token não disponível. Autenticação OAuth necessária.");
+      }
   
       try {
-        // Chamar API real para buscar curvas
-        const response = await fetch(`http://swk2adm1-001.k2sistemas.com.br:9095/curves?well=${wellName}`);
+        console.log("   🔐 Enviando requisição com Bearer token");
+        
+        // ==========================================
+        // CHAMADA À API EXTERNA COM BEARER TOKEN
+        // ==========================================
+        const response = await fetch(
+          `http://swk2adm1-001.k2sistemas.com.br:9095/curves?well=${wellName}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Content-Type": "application/json"
+            }
+          }
+        );
         
         if (!response.ok) {
           throw new Error(`API retornou erro: ${response.status}`);
         }
         
         const data = await response.json();
+        
+        console.log(`   ✅ ${data.count} curvas encontradas`);
         
         const message = data.count > 0 
           ? `📊 **Curvas disponíveis para o poço ${wellName}:**\n\n${data.curves.join(", ")}\n\nVocê pode selecionar até 3 curvas para o perfil composto.`
@@ -237,7 +321,7 @@ async function executeTool(toolName, args = {}, queryFn) {
         throw new Error("Máximo de 3 curvas permitidas");
       }
   
-      // URL de produção ou localhost conforme ambiente
+      // URL de produção
       const baseUrl = "https://curves.k2sistemas.com.br/";
       
       const params = new URLSearchParams({
@@ -246,19 +330,19 @@ async function executeTool(toolName, args = {}, queryFn) {
         lito: includeLithology.toString()
       });
   
-      const fullUrl = `${baseUrl}/?${params.toString()}`;
+      const fullUrl = `${baseUrl}?${params.toString()}`;
   
       console.log("   ✅ Link gerado:", fullUrl);
   
       const message = `🔗 **Perfil Composto do Poço ${wellName}**
 
-      Curvas selecionadas: ${curves.join(", ")}
-      Litologia: ${includeLithology ? "Incluída" : "Não incluída"}
+        Curvas selecionadas: ${curves.join(", ")}
+        Litologia: ${includeLithology ? "Incluída" : "Não incluída"}
 
-      Clique no link abaixo para visualizar o perfil composto:
-      ${fullUrl}
+        Clique no link abaixo para visualizar o perfil composto:
+        ${fullUrl}
 
-      ⚡ **Nota:** O perfil será gerado automaticamente ao abrir o link.`;
+        ⚡ **Nota:** O perfil será gerado automaticamente ao abrir o link.`;
   
       return {
         content: [{ type: "text", text: message }],
@@ -281,9 +365,14 @@ async function executeTool(toolName, args = {}, queryFn) {
           throw new Error("Cada item deve ter run, frame e curve");
         }
       }
+
+      if (!accessToken) {
+        throw new Error("Access token não disponível. Autenticação OAuth necessária.");
+      }
   
       try {
-        console.log("   📡 Fazendo POST para API DLIS...");
+        console.log("   📡 Requisitando dados DLIS...");
+        console.log("   🔐 Enviando requisição com Bearer token");
         
         const requestBody = {
           well: wellName,
@@ -292,13 +381,20 @@ async function executeTool(toolName, args = {}, queryFn) {
         
         console.log("   Request body:", JSON.stringify(requestBody, null, 2));
         
-        const response = await fetch("http://swk2adm1-001.k2sistemas.com.br:9095/dlis/data/by-keys", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(requestBody)
-        });
+        // ==========================================
+        // CHAMADA À API EXTERNA COM BEARER TOKEN
+        // ==========================================
+        const response = await fetch(
+          "http://swk2adm1-001.k2sistemas.com.br:9095/dlis/data/by-keys",
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(requestBody)
+          }
+        );
         
         if (!response.ok) {
           const errorText = await response.text();
@@ -307,7 +403,7 @@ async function executeTool(toolName, args = {}, queryFn) {
         
         const data = await response.json();
         
-        console.log("   ✅ Metadados recebidos");
+        console.log(`   ✅ Dados DLIS recebidos: ${data.data?.length || 0} pontos`);
         
         // Retornar dados brutos para o Claude interpretar
         return {

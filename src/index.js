@@ -5,6 +5,7 @@ const sessionManager = require("./session_manager");
 const { createMcpServer, toolsCount } = require("./mcp_server");
 const { cleanupExpired } = require("./oauth_storage");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const { AsyncLocalStorage } = require("async_hooks");
 require("dotenv").config();
 
 const express = require("express");
@@ -18,6 +19,16 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+// ===============================================
+// CONTEXTO DE REQUEST (AsyncLocalStorage)
+// ===============================================
+
+const requestContext = new AsyncLocalStorage();
+
+function getAccessToken() {
+  return requestContext.getStore()?.accessToken || null;
+}
 
 // ===============================================
 // MIDDLEWARES
@@ -50,7 +61,7 @@ const { validateToken } = setupOAuthEndpoints(app);
 // CRIAR MCP SERVER
 // ===============================================
 
-const mcpServer = createMcpServer(query);
+const mcpServer = createMcpServer(query, getAccessToken);
 
 // ===============================================
 // ROTAS BÁSICAS
@@ -95,59 +106,66 @@ app.post("/mcp", validateToken, async (req, res) => {
     console.log("      Arguments:", req.body?.params?.arguments);
   }
   
-  try {
-    if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
-      const newSessionId = sessionId || crypto.randomUUID();
+  // ==========================================
+  // CRIAR CONTEXTO COM ACCESS TOKEN
+  // ==========================================
+  const accessToken = req.headers.authorization?.replace("Bearer ", "");
+  
+  await requestContext.run({ accessToken }, async () => {
+    try {
+      if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
+        const newSessionId = sessionId || crypto.randomUUID();
+        
+        console.log(`🆕 Criando nova sessão: ${newSessionId}`);
+        
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => newSessionId,
+          onsessioninitialized: (sid) => {
+            console.log(`✅ Sessão inicializada: ${sid}`);
+            sessionManager.add(sid, transport);
+          }
+        });
+        
+        await mcpServer.connect(transport);
+        
+        res.setHeader("Mcp-Session-Id", newSessionId);
+        
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
       
-      console.log(`🆕 Criando nova sessão: ${newSessionId}`);
+      const transport = sessionManager.get(sessionId);
+      if (transport) {
+        console.log(`♻️ Reusando sessão: ${sessionId}`);
+        
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
       
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => newSessionId,
-        onsessioninitialized: (sid) => {
-          console.log(`✅ Sessão inicializada: ${sid}`);
-          sessionManager.add(sid, transport);
-        }
+      console.error(`❌ Sessão inválida: ${sessionId}`);
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Invalid session - please reinitialize"
+        },
+        id: req.body?.id || null
       });
       
-      await mcpServer.connect(transport);
+    } catch (error) {
+      console.error("❌ Erro no MCP:", error);
+      console.error("   Stack:", error.stack);
       
-      res.setHeader("Mcp-Session-Id", newSessionId);
-      
-      await transport.handleRequest(req, res, req.body);
-      return;
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: `Internal error: ${error.message}`
+        },
+        id: req.body?.id || null
+      });
     }
-    
-    const transport = sessionManager.get(sessionId);
-    if (transport) {
-      console.log(`♻️ Reusando sessão: ${sessionId}`);
-      
-      await transport.handleRequest(req, res, req.body);
-      return;
-    }
-    
-    console.error(`❌ Sessão inválida: ${sessionId}`);
-    res.status(400).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Invalid session - please reinitialize"
-      },
-      id: req.body?.id || null
-    });
-    
-  } catch (error) {
-    console.error("❌ Erro no MCP:", error);
-    console.error("   Stack:", error.stack);
-    
-    res.status(500).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32603,
-        message: `Internal error: ${error.message}`
-      },
-      id: req.body?.id || null
-    });
-  }
+  });
 });
 
 // ===============================================
@@ -218,19 +236,19 @@ app.listen(PORT, () => {
     console.log("✅ Banco de dados conectado");
   }
   
-  // Limpeza periódica de tokens expirados (a cada 6 horas) - ALTERADO
+  // Limpeza periódica de tokens expirados (a cada 6 horas)
   setInterval(() => {
     cleanupExpired();
   }, 6 * 60 * 60 * 1000);
   
-  // Limpeza de sessões MCP inativas (a cada 30 minutos) - ADICIONADO
+  // Limpeza de sessões MCP inativas (a cada 30 minutos)
   setInterval(() => {
     sessionManager.cleanup(3600000); // Remove sessões inativas há mais de 1 hora
   }, 1800000);
 });
 
 // ===============================================
-// GRACEFUL SHUTDOWN - ADICIONADO
+// GRACEFUL SHUTDOWN
 // ===============================================
 
 // Graceful shutdown ao receber SIGTERM (Render, Docker, etc)
@@ -248,7 +266,7 @@ process.on("SIGTERM", async () => {
   }
 });
 
-// Graceful shutdown ao receber SIGINT ( local)
+// Graceful shutdown ao receber SIGINT (Ctrl+C local)
 process.on("SIGINT", async () => {
   console.log("\n⚠️  SIGINT recebido (Ctrl+C). Encerrando servidor...");
   

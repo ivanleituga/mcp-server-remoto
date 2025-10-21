@@ -1,8 +1,9 @@
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
+const { ListToolsRequestSchema, CallToolRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
 const { tools, executeTool } = require("./tools");
 
 // Criar instância do servidor MCP
-function createMcpServer(queryFunction) {
+function createMcpServer(queryFunction, getAccessTokenFn) {
   const server = new Server({
     name: "mcp-well-database",
     version: "1.0.0",
@@ -21,9 +22,6 @@ function createMcpServer(queryFunction) {
       tools: {}
     }
   });
-
-  // Importar os schemas necessários
-  const { ListToolsRequestSchema, CallToolRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
 
   // Registrar handler para listar tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -49,7 +47,10 @@ function createMcpServer(queryFunction) {
     const args = request.params.arguments || {};
     
     try {
-      const result = await executeTool(toolName, args, queryFunction);
+      // Obter access token do contexto
+      const accessToken = getAccessTokenFn ? getAccessTokenFn() : null;
+      
+      const result = await executeTool(toolName, args, queryFunction, accessToken);
       console.log("   ✅ Tool executada com sucesso");
       
       // Retornar no formato correto do MCP
