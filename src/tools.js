@@ -320,6 +320,10 @@ async function executeTool(toolName, args = {}, queryFn, accessToken) {
       if (curves.length > 3) {
         throw new Error("Máximo de 3 curvas permitidas");
       }
+
+      if (!accessToken) {
+        throw new Error("Access token não disponível. Autenticação OAuth necessária.");
+      }
   
       // URL de produção
       const baseUrl = "https://curves.k2sistemas.com.br/";
@@ -330,19 +334,23 @@ async function executeTool(toolName, args = {}, queryFn, accessToken) {
         lito: includeLithology.toString()
       });
   
-      const fullUrl = `${baseUrl}?${params.toString()}`;
+      // ==========================================
+      // ADICIONAR TOKEN VIA HASH FRAGMENT (#)
+      // ==========================================
+      const fullUrl = `${baseUrl}?${params.toString()}#token=${accessToken}`;
   
-      console.log("   ✅ Link gerado:", fullUrl);
+      console.log("   ✅ Link gerado com token em hash fragment");
+      console.log(`   🔐 Token: ${accessToken.substring(0, 20)}...`);
   
       const message = `🔗 **Perfil Composto do Poço ${wellName}**
 
-        Curvas selecionadas: ${curves.join(", ")}
-        Litologia: ${includeLithology ? "Incluída" : "Não incluída"}
+      Curvas selecionadas: ${curves.join(", ")}
+      Litologia: ${includeLithology ? "Incluída" : "Não incluída"}
 
-        Clique no link abaixo para visualizar o perfil composto:
-        ${fullUrl}
+      Clique no link abaixo para visualizar o perfil composto:
+      ${fullUrl}
 
-        ⚡ **Nota:** O perfil será gerado automaticamente ao abrir o link.`;
+      ⚡ **Nota:** O perfil será gerado automaticamente ao abrir o link.`;
   
       return {
         content: [{ type: "text", text: message }],
