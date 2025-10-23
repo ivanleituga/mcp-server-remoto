@@ -157,41 +157,26 @@ function validateSelectQuery(sql) {
     throw new Error("Query SQL vazia após remover comentários");
   }
 
-  // Normaliza para uppercase e remove espaços múltiplos
-  const normalized = cleanSql.toUpperCase().replace(/\s+/g, " ");
+  // Normaliza para uppercase (mantém strings entre aspas intactas)
+  const upperSql = cleanSql.toUpperCase();
 
-  // Lista de comandos SQL proibidos (DDL, DML, DCL)
-  const forbiddenCommands = [
-    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
-    "TRUNCATE", "REPLACE", "MERGE", "GRANT", "REVOKE",
-    "COMMIT", "ROLLBACK", "SAVEPOINT", "EXEC", "EXECUTE",
-    "CALL", "DO", "LOAD", "COPY", "IMPORT"
-  ];
+  // WHITELIST: Aceita apenas queries que começam com SELECT ou WITH
+  const startsWithSelect = upperSql.startsWith("SELECT");
+  const startsWithWith = upperSql.startsWith("WITH");
 
-  // Verifica se começa com SELECT (pode ter WITH antes)
-  const startsWithSelect = normalized.startsWith("SELECT") || 
-                          normalized.startsWith("WITH");
-
-  if (!startsWithSelect) {
-    throw new Error("BLOQUEADO: Apenas queries SELECT são permitidas");
+  if (!startsWithSelect && !startsWithWith) {
+    throw new Error("BLOQUEADO: Apenas queries SELECT (ou WITH...SELECT) são permitidas");
   }
 
-  // Verifica se contém comandos proibidos em qualquer posição
-  // Usa word boundary para evitar falsos positivos (ex: "delete" em nome de coluna)
-  for (const cmd of forbiddenCommands) {
-    const regex = new RegExp(`\\b${cmd}\\b`, "i");
-    if (regex.test(cleanSql)) {
-      throw new Error(`BLOQUEADO: Comando SQL '${cmd}' não é permitido. Apenas SELECT é aceito.`);
-    }
-  }
-
-  // Verifica se contém ponto-e-vírgula seguido de outro comando (SQL injection)
-  if (/;[\s\S]+/g.test(cleanSql)) {
-    throw new Error("BLOQUEADO: Múltiplas queries não são permitidas");
+  // Bloqueia múltiplos comandos separados por ponto-e-vírgula
+  if (cleanSql.includes(";")) {
+    throw new Error("BLOQUEADO: Múltiplas queries não são permitidas (remova o ponto-e-vírgula)");
   }
 
   return true;
 }
+
+module.exports = { validateSelectQuery };
 
 // ===============================================
 // EXECUÇÃO DE TOOLS
