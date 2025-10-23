@@ -70,7 +70,7 @@ async function validateUser(username, password) {
 }
 
 // ===============================================
-// CLIENTS (MCP Clients Registrados)
+// CLIENTS
 // ===============================================
 
 async function createClient(clientData) {
@@ -115,7 +115,7 @@ async function getClientById(client_id) {
 }
 
 // ===============================================
-// TOKENS (Access e Refresh Tokens)
+// TOKENS
 // ===============================================
 
 async function createToken(tokenData) {
@@ -185,7 +185,7 @@ async function deleteToken(token) {
 }
 
 // ===============================================
-// CLEANUP (Limpeza Periódica)
+// CLEANUP
 // ===============================================
 
 async function cleanupExpired() {
