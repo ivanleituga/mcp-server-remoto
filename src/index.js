@@ -1,4 +1,4 @@
-const { getHomePage } = require("../utils/templates");
+const { getHomePage, getMcpTutorialPage } = require("../utils/templates");
 const { setupOAuthEndpoints } = require("./oauth_endpoints");
 const { query, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
@@ -89,7 +89,15 @@ app.get("/health", async (_req, res) => {
 });
 
 // ===============================================
-// ENDPOINT MCP
+// TUTORIAL MCP (GET /mcp)
+// ===============================================
+
+app.get("/mcp", (_req, res) => {
+  res.send(getMcpTutorialPage());
+});
+
+// ===============================================
+// ENDPOINT MCP (POST /mcp)
 // ===============================================
 
 app.post("/mcp", validateToken, async (req, res) => {
@@ -133,7 +141,7 @@ app.post("/mcp", validateToken, async (req, res) => {
         await transport.handleRequest(req, res, req.body);
         return;
       }
-      
+   
       const transport = sessionManager.get(sessionId);
       if (transport) {
         console.log(`♻️ Reusando sessão: ${sessionId}`);
