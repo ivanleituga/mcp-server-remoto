@@ -705,6 +705,10 @@ const getMcpTutorialPage = () => `
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       
+      html {
+        scroll-behavior: smooth;
+      }
+      
       body { 
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: #f7f8fa;
@@ -757,6 +761,67 @@ const getMcpTutorialPage = () => `
         color: #4b5563;
         font-size: 1.05rem;
         line-height: 1.7;
+      }
+      
+      .nav-buttons {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+        margin-bottom: 24px;
+      }
+      
+      .nav-button {
+        background: white;
+        color: #3B5998;
+        border: 2px solid #3B5998;
+        padding: 14px 32px;
+        border-radius: 8px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+        display: inline-block;
+      }
+      
+      .nav-button:hover {
+        background: #3B5998;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 89, 152, 0.3);
+      }
+      
+      @media (max-width: 600px) {
+        .nav-buttons {
+          flex-direction: column;
+        }
+        
+        .nav-button {
+          width: 100%;
+          text-align: center;
+        }
+      }
+      
+      .disclaimer {
+        background: #fee2e2;
+        border-left: 4px solid #dc2626;
+        padding: 20px;
+        margin-bottom: 24px;
+        border-radius: 6px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+      }
+      
+      .disclaimer-title {
+        font-weight: 700;
+        color: #991b1b;
+        font-size: 1.125rem;
+        margin-bottom: 8px;
+      }
+      
+      .disclaimer p {
+        color: #991b1b;
+        font-size: 1rem;
+        line-height: 1.6;
       }
       
       .section {
@@ -967,7 +1032,17 @@ const getMcpTutorialPage = () => `
         </p>
       </div>
       
-      <div class="section">
+      <div class="nav-buttons">
+        <a href="#primeiros-passos" class="nav-button">Primeiros Passos</a>
+        <a href="#funcionalidades" class="nav-button">Funcionalidades Disponíveis</a>
+      </div>
+      
+      <div class="disclaimer">
+        <div class="disclaimer-title">⚠️ Requisito Importante</div>
+        <p>Para ter acesso à essa funcionalidade, você precisa ter o plano plus ou superior do ChatGPT.</p>
+      </div>
+      
+      <div class="section" id="primeiros-passos">
         <h2>Primeiros Passos - Cerca de 1 minuto</h2>
         
         <div class="step">
@@ -1032,7 +1107,7 @@ const getMcpTutorialPage = () => `
         </div>
       </div>
       
-      <div class="section">
+      <div class="section" id="funcionalidades">
         <h2>Funcionalidades Disponíveis</h2>
         
         <p style="color: #4b5563; margin-bottom: 20px;">
