@@ -186,6 +186,8 @@ module.exports = { validateSelectQuery };
 // ===============================================
 
 async function executeTool(toolName, args = {}, queryFn, accessToken) {
+  if (args === "" || args === null) args = {};
+
   console.log("\n🔨 executeTool chamado:");
   console.log("   Tool:", toolName);
   console.log("   Args recebidos:", JSON.stringify(args, null, 2));
