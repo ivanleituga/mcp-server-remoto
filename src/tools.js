@@ -185,12 +185,24 @@ module.exports = { validateSelectQuery };
 // EXECUÇÃO DE TOOLS
 // ===============================================
 
-async function executeTool(toolName, args = {}, queryFn, accessToken) {
-  if (args === "" || args === null) args = {};
+async function executeTool(toolName, args, queryFn, accessToken) {
+  // 1) Normaliza args
+  let normalized = args;
+
+  // Trata undefined/null e string vazia/branca
+  if (normalized == null || (typeof normalized === "string" && normalized.trim() === "")) {
+    normalized = {};
+  }
+
+  // 2) Gera string JSON sem duplo-stringify
+  const argsStr = typeof normalized === "string"
+    ? normalized // já é JSON em string (ex: "{}")
+    : JSON.stringify(normalized); // objeto -> string
+
 
   console.log("\n🔨 executeTool chamado:");
   console.log("   Tool:", toolName);
-  console.log("   Args recebidos:", JSON.stringify(args, null, 2));
+  console.log("   Args (string p/ envio):", argsStr);
   console.log(`   Access Token: ${accessToken ? accessToken.substring(0, 20) + "..." : "[AUSENTE]"}`);
   
   try {
