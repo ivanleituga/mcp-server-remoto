@@ -5,14 +5,13 @@ const tools = [
     name: "fetch_well_database_schema",
     description: `Returns the complete and authoritative schema of the geological well/basin database.
 
-    Usage Rules:
-    - This tool MUST be called before any database query using 'query_well_database'.
-    - Fetch the schema once per conversation, and reuse it for subsequent queries.
-    - The schema it returns is the ONLY valid source of table and column names.
-
-    Output:
-    - The schema is provided in PostgreSQL 'CREATE TABLE' syntax for clarity.
-    - Treat the response as canonical and read-only.`,
+      ⚠️ IMPORTANT: This tool requires NO parameters. It must be called with empty object {}.
+      DO NOT pass empty string (""). Correct: arguments: {} | Incorrect: arguments: ""
+      
+      Usage Rules:
+      - This tool MUST be called before any database query using 'query_well_database'.
+      - Fetch the schema once per conversation, and reuse it for subsequent queries.
+      - The schema it returns is the ONLY valid source of table and column names.`,
     inputSchema: {
       type: "object",
       properties: {},
