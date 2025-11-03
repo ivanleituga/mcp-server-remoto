@@ -789,6 +789,31 @@ CREATE TABLE dlis_metadata_view (
   "Url de Download" TEXT,
   "Arquivo HDF5" TEXT
 );
+
+-- Tabela contendo os dados de produção dos poços de óleo e gás atualizados mensalmente
+CREATE TABLE public.wellproductiondata (
+  "Ano" SMALLINT NOT NULL,
+  "Mês/Ano" TEXT NOT NULL,
+  "Campo" TEXT,
+  "Bacia" TEXT,
+  "Instalação" TEXT,
+  "Poço" TEXT NOT NULL,
+  "Estado" TEXT,
+  "Ambiente" TEXT,
+  "Produção de Óleo (m³)" NUMERIC(18,3),
+  "Produção de Condensado (m³)" NUMERIC(18,3),
+  "Produção de Gás Associado (Mm³)" NUMERIC(18,3),
+  "Produção de Gás Não Associado (Mm³)" NUMERIC(18,3),
+  "Produção de Água (m³)" NUMERIC(18,3),
+  "Injeção de Gás (Mm³)" NUMERIC(18,3),
+  "Injeção de Água para Recuperação Secundária (m³)" NUMERIC(18,3),
+  "Injeção de Água para Descarte (m³)" NUMERIC(18,3),
+  "Injeção de Gás Carbônico (Mm³)" NUMERIC(18,3),
+  "Injeção de Nitrogênio (Mm³)" NUMERIC(18,3),
+  "Injeção de Vapor de Água (t)" NUMERIC(18,3),
+  "Injeção de Polímeros (m³)" NUMERIC(18,3),
+  "Injeção de Outros Fluidos (m³)" NUMERIC(18,3)
+);
 `;
 
 module.exports = {
