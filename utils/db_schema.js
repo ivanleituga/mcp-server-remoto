@@ -791,7 +791,7 @@ CREATE TABLE dlis_metadata_view (
 );
 
 -- Tabela contendo os dados de produção dos poços de óleo e gás atualizados mensalmente
-CREATE TABLE public.wellproductiondata (
+CREATE TABLE wellproductiondata (
   "Ano" SMALLINT NOT NULL,
   "Mês/Ano" TEXT NOT NULL,
   "Campo" TEXT,
