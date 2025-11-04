@@ -8,15 +8,19 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
     name: "mcp-well-database",
     version: "1.0.0",
     description: `MCP Server for Well Database and Profile Visualization.
-    
-    - For profile visualization requests, DO NOT query the database unless specifically needed
-    - Only fetch schema once in a conversation
-    
-    WORKFLOW EXAMPLES:
-    - User asks for composite profile: get_well_curves → generate_composite_profile_link
-    - User asks for well data: fetch_schema → query_database
-    - User asks for curve analysis: fetch_schema → query_database (dlis_metadata_view) → get_dlis_data
-    `
+
+    WORKFLOW GUIDELINES:
+    - If user asks for:
+
+    1. Composite profile → get_well_curves → ask user for curves → generate_composite_profile_link
+    2. Well data → fetch_well_database_schema → query_well_database
+    3. Curve analysis → fetch_well_database_schema → query_well_database (dlis_metadata_view) → get_dlis_metadata
+
+    RULES:
+    - Fetch schema only ONCE per conversation.
+    - NEVER query the database without first fetching the schema.
+    - ALWAYS confirm curve selection before generating a profile link.
+    - NEVER query the database for profile visualization.`
   }, {
     capabilities: {
       tools: {}

@@ -22,20 +22,17 @@ const tools = [
     name: "query_well_database",
     description: `Executes read-only PostgreSQL queries on the geological well/basin database based on the user's natural language prompt.
 
-    Critical Usage Requirements:
+    ⚠️ IMPORTANT:
     - This tool MAY ONLY be used after 'fetch_well_database_schema' has been successfully called in the current conversation.
     - Only SELECT queries are permitted — never use DDL or DML (CREATE, UPDATE, DELETE, INSERT, DROP).
+    - Results are returned as JSON arrays representing table rows.
 
     Query Construction Rules:
     - Use only the tables and columns provided by 'fetch_well_database_schema'.
     - Do not infer or invent additional structures.
     - Use ILIKE and unaccent() for string comparisons (case-insensitive, accent-insensitive).
     - Do not include semicolons.
-    - Use fully qualified or quoted column names where ambiguity is possible.
-
-    Behavior:
-    - Attempts to execute a query without schema context must be rejected.
-    - Results are returned as JSON arrays representing table rows.`,
+    - Use fully qualified or quoted column names where ambiguity is possible.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -68,7 +65,7 @@ const tools = [
     description: `Generates a link to the Composite Profile Viewer application for a specific well with selected curves.
     Use this tool when the user wants to visualize a composite profile with specific curves.
     Maximum 3 curves can be selected at once (minimum 1 curve).
-    Important: Call get_well_curves first to verify which curves are available for the well.
+    ⚠️ IMPORTANT: Call get_well_curves first to verify which curves are available for the well.
     CRITICAL: Use the EXACT curve names as returned by get_well_curves tool - do not abbreviate or translate them.
     NOTE: This tool does NOT require fetching database schema or querying well information - it only needs the well name and curve names.`,
     inputSchema: {
@@ -103,7 +100,7 @@ const tools = [
     This tool fetches detailed curve data from DLIS files for a specific well, including depth-value pairs.
     Use this when you need to analyze specific curves like gamma rays, resistivity, or time measurements.
     
-    Important:
+    ⚠️ IMPORTANT:
     - You must know the exact run, frame, and curve names (use the dlis_metadata_view table to find these)
     - Each item in the request represents a specific curve to retrieve
     - The response includes both metadata and actual measurement points`,

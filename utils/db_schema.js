@@ -1,5 +1,28 @@
 // Schema do banco
 const schema = `
+-- Tabela contendo informações gerais sobre os testes de formação. Essa é a tabela principal para esses testes, 
+use "ID do Teste de Formação" para relacionar com outras tabelas que contém essa coluna.
+CREATE TABLE formationtestsgeneralinfo_view (
+  "ID do Teste de Formação" INT,
+  "Poço" TEXT,
+  "Bacia" TEXT,
+  "Categoria do Poço" TEXT,
+  "Data" DATE,
+  "Tipo" TEXT,
+  "CIA" TEXT,
+  "Topo" REAL,
+  "Base" REAL,
+  "Profundidade do Poço de Teste" REAL,
+  "Diâmetro" REAL,
+  "Profundidade do Topo do Tampão" REAL,
+  "Temperatura Máxima do Teste" REAL,
+  "Fonte da Temperatura Máxima" TEXT,
+  "Objetivo" TEXT,
+  "Motivo" TEXT,
+  "Resultado" TEXT,
+  "Observações" TEXT
+);
+
 -- Tabela contendo os dados da carta dos testes de formação
 CREATE TABLE formationtestschartdata_view (
   "ID" INT,
@@ -68,28 +91,6 @@ CREATE TABLE formationtestsdrillingfluid_view (
   "Concentração de Mg+2" REAL,
   "Concentração de Traçador" REAL,
   "Tipo do Traçador" TEXT
-);
-
--- Tabela contendo informações gerais sobre os testes de formação
-CREATE TABLE formationtestsgeneralinfo_view (
-  "ID do Teste de Formação" INT,
-  "Poço" TEXT,
-  "Bacia" TEXT,
-  "Categoria do Poço" TEXT,
-  "Data" DATE,
-  "Tipo" TEXT,
-  "CIA" TEXT,
-  "Topo" REAL,
-  "Base" REAL,
-  "Profundidade do Poço de Teste" REAL,
-  "Diâmetro" REAL,
-  "Profundidade do Topo do Tampão" REAL,
-  "Temperatura Máxima do Teste" REAL,
-  "Fonte da Temperatura Máxima" TEXT,
-  "Objetivo" TEXT,
-  "Motivo" TEXT,
-  "Resultado" TEXT,
-  "Observações" TEXT
 );
 
 -- Tabela contendo informações sobre a interpretação da carta dos testes de formação
