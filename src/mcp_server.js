@@ -2,7 +2,7 @@ const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { ListToolsRequestSchema, CallToolRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
 const { tools, executeTool } = require("./tools");
 const AuditLogger = require("./audit_logger");
-const { requestContext } = require("./index");
+const { requestContext } = require("./context");
 
 // Criar instância do servidor MCP
 function createMcpServer(queryFunction, getAccessTokenFn) {

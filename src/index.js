@@ -6,7 +6,8 @@ const { createMcpServer, toolsCount } = require("./mcp_server");
 const { cleanupExpired } = require("./oauth_storage");
 const AuditLogger = require("./audit_logger");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
-const { AsyncLocalStorage } = require("async_hooks");
+const { requestContext, getAccessToken } = require("./context");
+
 require("dotenv").config();
 
 const express = require("express");
@@ -20,18 +21,6 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-
-// ===============================================
-// CONTEXTO DE REQUEST (AsyncLocalStorage)
-// ===============================================
-
-const requestContext = new AsyncLocalStorage();
-
-function getAccessToken() {
-  return requestContext.getStore()?.accessToken || null;
-}
-
-module.exports.requestContext = requestContext;
 
 // ===============================================
 // MIDDLEWARES
