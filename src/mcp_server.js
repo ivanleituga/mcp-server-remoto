@@ -65,7 +65,7 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
       // Log de tool call bem-sucedida
       const ctx = requestContext.getStore();
       if (ctx?.userId) {
-        await AuditLogger.logTool(
+        await AuditLogger.logToolCall(
           ctx.userId,
           ctx.clientId,
           ctx.sessionId,
@@ -88,7 +88,7 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
       // Log de tool call com erro
       const ctx = requestContext.getStore();
       if (ctx?.userId) {
-        await AuditLogger.logTool(
+        await AuditLogger.logToolCall(
           ctx.userId,
           ctx.clientId,
           ctx.sessionId,
