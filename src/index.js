@@ -4,6 +4,7 @@ const { query, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
 const { createMcpServer, toolsCount } = require("./mcp_server");
 const { cleanupExpired } = require("./oauth_storage");
+const AuditLogger = require("./audit_logger");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const { AsyncLocalStorage } = require("async_hooks");
 require("dotenv").config();
@@ -29,6 +30,8 @@ const requestContext = new AsyncLocalStorage();
 function getAccessToken() {
   return requestContext.getStore()?.accessToken || null;
 }
+
+module.exports.requestContext = requestContext;
 
 // ===============================================
 // MIDDLEWARES
@@ -115,11 +118,17 @@ app.post("/mcp", validateToken, async (req, res) => {
   }
   
   // ==========================================
-  // CRIAR CONTEXTO COM ACCESS TOKEN
+  // CONTEXTO EXPANDIDO (userId, clientId, sessionId, req)
   // ==========================================
   const accessToken = req.headers.authorization?.replace("Bearer ", "");
   
-  await requestContext.run({ accessToken }, async () => {
+  await requestContext.run({
+    accessToken,
+    userId: req.oauth.user_id,        // user_id para o logger
+    clientId: req.oauth.client_id,    // client_id para o logger
+    sessionId: sessionId || crypto.randomUUID(), // sessionId para o logger
+    req: req                          // req completo para extrair IP, user-agent, etc
+  }, async () => {
     try {
       if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
         const newSessionId = sessionId || crypto.randomUUID();
@@ -253,6 +262,11 @@ app.listen(PORT, () => {
   setInterval(() => {
     sessionManager.cleanup(3600000); // Remove sessões inativas há mais de 1 hora
   }, 1800000);
+  
+  // Flush do AuditLogger a cada 5 minutos (caso o buffer não encha)
+  setInterval(() => {
+    AuditLogger.flush();
+  }, 5 * 60 * 1000);
 });
 
 // ===============================================
@@ -264,6 +278,10 @@ process.on("SIGTERM", async () => {
   console.log("\n⚠️  SIGTERM recebido. Encerrando servidor...");
   
   try {
+    // Flush final do audit logger
+    await AuditLogger.flush();
+    console.log("✅ Audit log salvo");
+    
     await sessionManager.closeAll();
     console.log("✅ Todas as sessões MCP fechadas");
     
@@ -279,6 +297,10 @@ process.on("SIGINT", async () => {
   console.log("\n⚠️  SIGINT recebido (Ctrl+C). Encerrando servidor...");
   
   try {
+    // Flush final do audit logger
+    await AuditLogger.flush();
+    console.log("✅ Audit log salvo");
+    
     await sessionManager.closeAll();
     console.log("✅ Todas as sessões MCP fechadas");
     

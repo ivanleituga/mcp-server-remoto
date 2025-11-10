@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const { getUnifiedAuthPage, getDocsPage } = require("../utils/templates");
+const AuditLogger = require("./audit_logger");
 const { validateUser } = require("./oauth_storage");
 const {
   createClient,
@@ -271,6 +272,9 @@ function setupOAuthEndpoints(app) {
       if (!userValidation.valid) {
         console.log(`   ❌ Validação falhou: ${userValidation.error}`);
         
+        // Log de login falhado
+        await AuditLogger.logLoginFailure(username, client_id, req, userValidation.error);
+        
         const client = await getClientById(client_id);
         return res.send(getUnifiedAuthPage(client, {
           client_id,
@@ -281,6 +285,9 @@ function setupOAuthEndpoints(app) {
           scope
         }, userValidation.error));
       }
+      
+      // Log de login bem-sucedido
+      await AuditLogger.logLogin(userValidation.userId, client_id, req);
       
       const code = crypto.randomBytes(32).toString("base64url");
       
@@ -379,14 +386,12 @@ function setupOAuthEndpoints(app) {
           expiresAt: Date.now() + config.TOKEN_EXPIRY
         });
         
-        // CORREÇÃO: Não passar expiresAt, deixar oauth_storage.js adicionar automaticamente
         await createToken({
           token: refreshToken,
           token_type: "refresh",
           client_id: codeData.client_id,
           user_id: codeData.user_id,
           scope: codeData.scope
-          // expiresAt removido - oauth_storage.js vai adicionar 30 dias
         });
         
         console.log(`   ✅ Access token: ${accessToken.substring(0, 20)}...`);
@@ -440,14 +445,12 @@ function setupOAuthEndpoints(app) {
         });
 
         const newRefreshToken = crypto.randomBytes(32).toString("base64url");
-        // CORREÇÃO: Não passar expiresAt, deixar oauth_storage.js adicionar automaticamente
         await createToken({
           token: newRefreshToken,
           token_type: "refresh",
           client_id: refreshData.client_id,
           user_id: refreshData.user_id,
           scope: refreshData.scope
-          // expiresAt removido - oauth_storage.js vai adicionar 30 dias
         });
 
         await revokeToken(refresh_token);

@@ -1,6 +1,8 @@
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { ListToolsRequestSchema, CallToolRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
 const { tools, executeTool } = require("./tools");
+const AuditLogger = require("./audit_logger");
+const { requestContext } = require("./index");
 
 // Criar instância do servidor MCP
 function createMcpServer(queryFunction, getAccessTokenFn) {
@@ -50,12 +52,30 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
     const toolName = request.params.name;
     const args = request.params.arguments || {};
     
+    // Capturar tempo de início
+    const startTime = Date.now();
+    
     try {
       // Obter access token do contexto
       const accessToken = getAccessTokenFn ? getAccessTokenFn() : null;
       
       const result = await executeTool(toolName, args, queryFunction, accessToken);
       console.log("   ✅ Tool executada com sucesso");
+      
+      // Log de tool call bem-sucedida
+      const ctx = requestContext.getStore();
+      if (ctx?.userId) {
+        await AuditLogger.logTool(
+          ctx.userId,
+          ctx.clientId,
+          ctx.sessionId,
+          toolName,
+          args,
+          result,
+          ctx.req,
+          startTime
+        );
+      }
       
       // Retornar no formato correto do MCP
       return {
@@ -64,6 +84,21 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
       };
     } catch (error) {
       console.error("   ❌ Erro na tool:", error.message);
+      
+      // Log de tool call com erro
+      const ctx = requestContext.getStore();
+      if (ctx?.userId) {
+        await AuditLogger.logTool(
+          ctx.userId,
+          ctx.clientId,
+          ctx.sessionId,
+          toolName,
+          args,
+          { isError: true, content: [{ type: "text", text: error.message }] },
+          ctx.req,
+          startTime
+        );
+      }
       
       return {
         content: [{ 
