@@ -15,31 +15,28 @@ const cors = require("cors");
 const crypto = require("crypto");
 
 // ===============================================
-// CONFIGURAÇÃO
+// CONFIG BÁSICA
 // ===============================================
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SERVER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+const SERVER_URL =
+  process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
 // ===============================================
 // MIDDLEWARES
 // ===============================================
 
-app.use("/utils", express.static("utils"));
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Log de todas as requisições
+// Servir assets estáticos (logo etc.)
+app.use("/utils", express.static("utils"));
+
+// Log básico de requisições
 app.use((req, _res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log("   Body keys:", Object.keys(req.body));
-  }
+  console.log(`\n📨 ${req.method} ${req.path}`);
   next();
 });
 
@@ -60,17 +57,15 @@ const mcpServer = createMcpServer(query, getAccessToken);
 // ===============================================
 
 app.get("/", (_req, res) => {
-  res.send(getHomePage(
-    SERVER_URL, 
-    isConnected(),
-    sessionManager.count(),
-    toolsCount
-  ));
+  const dbStatus = isConnected();
+  const sessionCount = sessionManager.count();
+
+  res.send(getHomePage(SERVER_URL, dbStatus, sessionCount, toolsCount));
 });
 
-app.get("/health", async (_req, res) => {
+app.get("/health", (_req, res) => {
   const dbStatus = isConnected();
-  
+
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -89,89 +84,107 @@ app.get("/mcp", (_req, res) => {
 });
 
 // ===============================================
-// ENDPOINT MCP (POST /mcp)
+// POST /mcp - JSON-RPC MCP COM SESSÕES HTTP
 // ===============================================
 
 app.post("/mcp", validateToken, async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
+  const sessionIdHeader = req.headers["mcp-session-id"];
   const isInit = req.body?.method === "initialize";
-  
+
   console.log("\n🔄 MCP Request:");
   console.log(`   Method: ${req.body?.method || "unknown"}`);
-  console.log(`   Session: ${sessionId || "new"}`);
-  
+  console.log(`   Session: ${sessionIdHeader || "new"}`);
+
   if (req.body?.method === "tools/call") {
     console.log("   🔧 Tool Call Details:");
     console.log(`      Name: ${req.body?.params?.name}`);
     console.log("      Arguments:", req.body?.params?.arguments);
   }
-  
-  // ==========================================
-  // CONTEXTO EXPANDIDO (userId, clientId, sessionId, req)
-  // ==========================================
-  const accessToken = req.headers.authorization?.replace("Bearer ", "");
-  
-  await requestContext.run({
-    accessToken,
-    userId: req.oauth.user_id,        // user_id para o logger
-    clientId: req.oauth.client_id,    // client_id para o logger
-    sessionId: sessionId || crypto.randomUUID(), // sessionId para o logger
-    req: req                          // req completo para extrair IP, user-agent, etc
-  }, async () => {
-    try {
-      if (!sessionId || !sessionManager.exists(sessionId) || isInit) {
-        const newSessionId = sessionId || crypto.randomUUID();
-        
-        console.log(`🆕 Criando nova sessão: ${newSessionId}`);
-        
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => newSessionId,
-          onsessioninitialized: (sid) => {
-            console.log(`✅ Sessão inicializada: ${sid}`);
-            sessionManager.add(sid, transport);
+
+  // Access token atual, usado pelas tools (curves/dlis)
+  const authHeader = req.headers.authorization || "";
+  const accessToken = authHeader.startsWith("Bearer ")
+    ? authHeader.substring("Bearer ".length)
+    : null;
+
+  const effectiveSessionId = sessionIdHeader || crypto.randomUUID();
+
+  await requestContext.run(
+    {
+      accessToken,
+      userId: req.oauth.user_id, // user_id para o logger
+      clientId: req.oauth.client_id, // client_id para o logger
+      sessionId: effectiveSessionId, // sessionId para o logger
+      req // req completo para extrair IP, user-agent, etc
+    },
+    async () => {
+      try {
+        // Nova sessão ou re-inicialização
+        if (
+          !sessionIdHeader ||
+          !sessionManager.exists(sessionIdHeader) ||
+          isInit
+        ) {
+          const newSessionId = effectiveSessionId;
+
+          console.log(`🆕 Criando nova sessão: ${newSessionId}`);
+
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => newSessionId,
+            onsessioninitialized: (sid) => {
+              console.log(`✅ Sessão inicializada: ${sid}`);
+              sessionManager.add(sid, transport);
+            }
+          });
+
+          await mcpServer.connect(transport);
+
+          res.setHeader("Mcp-Session-Id", newSessionId);
+
+          await transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // Sessão já existente
+        if (!sessionManager.exists(sessionIdHeader)) {
+          console.log(
+            "   ⚠️  Sessão informada não existe mais. Cliente deve reinicializar."
+          );
+          return res.status(400).json({
+            error: "invalid_session",
+            message: "Sessão não encontrada. Reinicie a conexão MCP."
+          });
+        }
+
+        const transport = sessionManager.get(sessionIdHeader);
+        if (!transport) {
+          console.log("   ⚠️  Transport não encontrado para sessão");
+          return res.status(400).json({
+            error: "invalid_session",
+            message: "Transport não encontrado para sessão MCP."
+          });
+        }
+
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        console.error("❌ Erro ao processar /mcp:", error);
+        await AuditLogger.logError(
+          req.oauth.user_id,
+          req.oauth.client_id,
+          effectiveSessionId,
+          error,
+          {
+            path: "/mcp",
+            method: req.body?.method
           }
+        );
+        res.status(500).json({
+          error: "internal_error",
+          message: "Erro interno ao processar requisição MCP"
         });
-        
-        await mcpServer.connect(transport);
-        
-        res.setHeader("Mcp-Session-Id", newSessionId);
-        
-        await transport.handleRequest(req, res, req.body);
-        return;
       }
-   
-      const transport = sessionManager.get(sessionId);
-      if (transport) {
-        console.log(`♻️ Reusando sessão: ${sessionId}`);
-        
-        await transport.handleRequest(req, res, req.body);
-        return;
-      }
-      
-      console.error(`❌ Sessão inválida: ${sessionId}`);
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32000,
-          message: "Invalid session - please reinitialize"
-        },
-        id: req.body?.id || null
-      });
-      
-    } catch (error) {
-      console.error("❌ Erro no MCP:", error);
-      console.error("   Stack:", error.stack);
-      
-      res.status(500).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: `Internal error: ${error.message}`
-        },
-        id: req.body?.id || null
-      });
     }
-  });
+  );
 });
 
 // ===============================================
@@ -180,10 +193,10 @@ app.post("/mcp", validateToken, async (req, res) => {
 
 app.delete("/mcp", validateToken, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
-  
+
   console.log("\n🗑️  DELETE /mcp");
   console.log(`   Session: ${sessionId || "none"}`);
-  
+
   if (!sessionId) {
     console.log("   ⚠️  Nenhuma sessão especificada");
     return res.status(400).json({
@@ -191,7 +204,7 @@ app.delete("/mcp", validateToken, async (req, res) => {
       message: "Header Mcp-Session-Id required"
     });
   }
-  
+
   try {
     if (sessionManager.exists(sessionId)) {
       const transport = sessionManager.get(sessionId);
@@ -199,103 +212,71 @@ app.delete("/mcp", validateToken, async (req, res) => {
         await transport.close();
         console.log(`   ✅ Transport fechado: ${sessionId}`);
       }
-      
+
       sessionManager.remove(sessionId);
       console.log(`   ✅ Sessão removida: ${sessionId}`);
-      
-      res.status(200).json({ 
-        message: "Session deleted successfully",
-        session_id: sessionId 
+
+      res.status(200).json({
+        status: "ok",
+        message: "Sessão encerrada com sucesso"
       });
     } else {
-      console.log(`   ⚠️  Sessão não encontrada: ${sessionId}`);
-      res.status(200).json({ 
-        message: "Session not found or already deleted",
-        session_id: sessionId 
+      console.log("   ⚠️  Sessão não encontrada");
+      res.status(404).json({
+        error: "session_not_found",
+        message: "Sessão não encontrada"
       });
     }
-    
   } catch (error) {
-    console.error("   ❌ Erro ao deletar sessão:", error.message);
+    console.error("❌ Erro ao encerrar sessão MCP:", error);
+    await AuditLogger.logError(null, null, sessionId, error, {
+      path: "/mcp",
+      operation: "delete_session"
+    });
     res.status(500).json({
       error: "internal_error",
-      message: error.message
+      message: "Erro interno ao encerrar sessão"
     });
   }
 });
 
 // ===============================================
-// INICIALIZAÇÃO
+// INICIAR SERVIDOR
 // ===============================================
 
-app.listen(PORT, () => {
-  console.log("\n🚀 MCP Well Database Server");
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`🔗 URL: ${SERVER_URL}`);
-  console.log(`🔧 Tools: ${toolsCount} registered`);
-  console.log("🔐 OAuth: Enabled (DCR + PKCE)");
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log(`🔌 Connect: ${SERVER_URL}/mcp`);
-  
-  if (isConnected()) {
-    console.log("✅ Banco de dados conectado");
-  }
-  
-  // Limpeza periódica de tokens expirados (a cada 6 horas)
+const server = app.listen(PORT, () => {
+  console.log(`\n🚀 MCP Well Database Server rodando na porta ${PORT}`);
+  console.log(`   URL base: ${SERVER_URL}`);
+  console.log(`   Ferramentas MCP disponíveis: ${toolsCount}`);
+
+  // Limpeza de tokens expirados (a cada 6 horas)
   setInterval(() => {
+    console.log("🧹 Limpando tokens OAuth expirados...");
     cleanupExpired();
   }, 6 * 60 * 60 * 1000);
-  
+
   // Limpeza de sessões MCP inativas (a cada 30 minutos)
   setInterval(() => {
-    sessionManager.cleanup(3600000); // Remove sessões inativas há mais de 1 hora
-  }, 1800000);
-  
+    console.log("🧹 Limpando sessões MCP inativas...");
+    sessionManager.cleanup(60 * 60 * 1000); // Remove sessões inativas há mais de 1 hora
+  }, 30 * 60 * 1000);
+
   // Flush do AuditLogger a cada 5 minutos (caso o buffer não encha)
   setInterval(() => {
+    console.log("🧾 Flush periódico do AuditLogger...");
     AuditLogger.flush();
   }, 5 * 60 * 1000);
 });
 
-// ===============================================
-// GRACEFUL SHUTDOWN
-// ===============================================
-
-// Graceful shutdown ao receber SIGTERM (Render, Docker, etc)
-process.on("SIGTERM", async () => {
-  console.log("\n⚠️  SIGTERM recebido. Encerrando servidor...");
-  
-  try {
-    // Flush final do audit logger
+// Encerramento gracioso
+function shutdown(signal) {
+  console.log(`\n${signal} recebido. Encerrando servidor...`);
+  server.close(async () => {
     await AuditLogger.flush();
-    console.log("✅ Audit log salvo");
-    
     await sessionManager.closeAll();
-    console.log("✅ Todas as sessões MCP fechadas");
-    
     process.exit(0);
-  } catch (error) {
-    console.error("❌ Erro ao fechar sessões:", error.message);
-    process.exit(1);
-  }
-});
+  });
+}
 
-// Graceful shutdown ao receber SIGINT (Ctrl+C local)
-process.on("SIGINT", async () => {
-  console.log("\n⚠️  SIGINT recebido (Ctrl+C). Encerrando servidor...");
-  
-  try {
-    // Flush final do audit logger
-    await AuditLogger.flush();
-    console.log("✅ Audit log salvo");
-    
-    await sessionManager.closeAll();
-    console.log("✅ Todas as sessões MCP fechadas");
-    
-    process.exit(0);
-  } catch (error) {
-    console.error("❌ Erro ao fechar sessões:", error.message);
-    process.exit(1);
-  }
-});
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

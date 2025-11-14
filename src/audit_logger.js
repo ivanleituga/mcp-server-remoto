@@ -4,10 +4,63 @@ const geoip = require("geoip-lite");
 class AuditLogger {
   // Buffer para batch inserts (otimização)
   static buffer = [];
-  static MAX_BUFFER = 50; // Flush a cada 50 eventos
+  static MAX_BUFFER = 50;              // Flush a cada 50 eventos
   static flushTimer = null;
-  static FLUSH_INTERVAL = 5000; // 5 segundos
-  
+  static FLUSH_INTERVAL = 5000;        // 5 segundos
+
+  /**
+   * Limita o tamanho de strings para evitar explosão de log
+   */
+  static truncate(str, maxLength) {
+    if (!str) return null;
+    if (str.length <= maxLength) return str;
+    return str.substring(0, maxLength) + "...[truncated]";
+  }
+
+  /**
+   * Obtém IP "real" do request (considerando proxy)
+   */
+  static getIP(req) {
+    if (!req) return null;
+    const header = req.headers["x-forwarded-for"];
+    if (header) {
+      return header.split(",")[0].trim();
+    }
+    return req.ip || req.connection?.remoteAddress || null;
+  }
+
+  /**
+   * Sanitiza objetos para remover campos sensíveis (senha, token, etc.)
+   */
+  static sanitize(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+
+    // Clonar objeto superficialmente
+    const clean = Array.isArray(obj) ? [...obj] : { ...obj };
+
+    const sensitive = [
+      "password",
+      "senha",
+      "token",
+      "secret",
+      "authorization",
+      "cookie",
+      "set-cookie"
+    ];
+
+    for (const key of Object.keys(clean)) {
+      const keyLower = key.toLowerCase();
+
+      if (sensitive.some((s) => keyLower.includes(s))) {
+        clean[key] = "[REDACTED]";
+      } else if (typeof clean[key] === "object" && clean[key] !== null) {
+        clean[key] = this.sanitize(clean[key]); // Recursivo
+      }
+    }
+
+    return clean;
+  }
+
   /**
    * Método genérico de log - Base para todos os outros
    */
@@ -17,6 +70,7 @@ class AuditLogger {
       client_id: event.clientId || null,
       session_id: event.sessionId || null,
       event_type: event.eventType,
+      auth_method: event.authMethod || null,
       tool_name: event.toolName || null,
       ip_address: event.ip || null,
       user_agent: event.userAgent || null,
@@ -24,44 +78,41 @@ class AuditLogger {
       city: null,
       duration_ms: event.durationMs || null,
       status: event.status || "success",
-      error_message: event.errorMessage ? this.truncate(event.errorMessage, 1000) : null,
+      error_message: event.errorMessage
+        ? this.truncate(event.errorMessage, 1000)
+        : null,
       metadata: null
     };
-    
-    // Geolocalização (se tiver IP)
-    if (event.ip) {
+
+    // GeoIP se tivermos IP
+    if (record.ip_address) {
       try {
-        const geo = geoip.lookup(event.ip);
+        const geo = geoip.lookup(record.ip_address);
         if (geo) {
-          record.country = geo.country;
-          record.city = geo.city;
+          record.country = geo.country || null;
+          record.city = geo.city || null;
         }
-      } catch (error) {
-        // Falha silenciosa na geolocalização
-        console.error("⚠️  Erro ao obter geolocalização:", error.message);
+      } catch (err) {
+        console.warn("⚠️  Falha ao resolver geoip:", err.message);
       }
     }
-    
-    // Metadata (JSON)
+
+    // Metadata sanitizada (se houver)
     if (event.metadata) {
-      try {
-        record.metadata = JSON.stringify(event.metadata);
-      } catch (error) {
-        console.error("⚠️  Erro ao serializar metadata:", error.message);
-      }
+      record.metadata = JSON.stringify(this.sanitize(event.metadata));
     }
-    
+
     // Adicionar ao buffer
     this.buffer.push(record);
-    
-    // Flush se buffer cheio
+
+    // Se buffer grande o suficiente, flush imediato
     if (this.buffer.length >= this.MAX_BUFFER) {
       await this.flush();
     } else {
       this.scheduleFlush();
     }
   }
-  
+
   /**
    * Agenda flush automático (se não tiver agendado)
    */
@@ -72,34 +123,37 @@ class AuditLogger {
       }, this.FLUSH_INTERVAL);
     }
   }
-  
+
   /**
    * Grava buffer no banco de dados
    */
   static async flush() {
     if (this.buffer.length === 0) return;
-    
+
     const records = [...this.buffer];
     this.buffer = [];
-    
+
     // Limpar timer
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    
+
     try {
       // Construir query com múltiplos VALUES
-      const placeholders = records.map((_, i) => {
-        const base = i * 13;
-        return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9},$${base+10},$${base+11},$${base+12},$${base+13})`;
-      }).join(",");
-      
-      const params = records.flatMap(r => [
+      const placeholders = records
+        .map((_, i) => {
+          const base = i * 14;
+          return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14})`;
+        })
+        .join(",");
+
+      const params = records.flatMap((r) => [
         r.user_id,
         r.client_id,
         r.session_id,
         r.event_type,
+        r.auth_method,
         r.tool_name,
         r.ip_address,
         r.user_agent,
@@ -110,93 +164,56 @@ class AuditLogger {
         r.error_message,
         r.metadata
       ]);
-      
-      await pool.query(`
+
+      await pool.query(
+        `
         INSERT INTO mcp_audit_log (
-          user_id, client_id, session_id, event_type, tool_name,
+          user_id, client_id, session_id, event_type, auth_method, tool_name,
           ip_address, user_agent, country, city, duration_ms,
           status, error_message, metadata
         ) VALUES ${placeholders}
-      `, params);
-      
-      console.log(`📊 Audit log: ${records.length} eventos registrados`);
-      
+      `,
+        params
+      );
     } catch (error) {
-      console.error("❌ Erro ao salvar audit log:", error.message);
-      
-      // Re-adicionar ao buffer para retry (evita perda de dados)
-      this.buffer.unshift(...records);
+      console.error("❌ Erro ao gravar audit log:", error.message);
+      // Em caso de falha, não relança para não quebrar fluxo principal
     }
   }
-  
-  /**
-   * Extrai IP real da requisição (considera proxies)
-   */
-  static getIP(req) {
-    return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-           req.headers["x-real-ip"] ||
-           req.ip ||
-           req.connection?.remoteAddress ||
-           req.socket?.remoteAddress ||
-           "unknown";
-  }
-  
-  /**
-   * Sanitiza dados sensíveis (remove/mascara)
-   */
-  static sanitize(obj) {
-    if (!obj || typeof obj !== "object") return obj;
-    
-    const sensitive = ["password", "token", "secret", "apikey", "authorization", "bearer"];
-    const clean = Array.isArray(obj) ? [...obj] : { ...obj };
-    
-    for (const key in clean) {
-      const keyLower = key.toLowerCase();
-      
-      if (sensitive.some(s => keyLower.includes(s))) {
-        clean[key] = "[REDACTED]";
-      } else if (typeof clean[key] === "object" && clean[key] !== null) {
-        // Recursivo para objetos aninhados
-        clean[key] = this.sanitize(clean[key]);
-      }
-    }
-    
-    return clean;
-  }
-  
-  /**
-   * Trunca string longa
-   */
-  static truncate(str, maxLength) {
-    if (!str) return str;
-    if (str.length <= maxLength) return str;
-    return str.substring(0, maxLength) + "... [truncated]";
-  }
-  
-  // =============================================
-  // MÉTODOS ESPECÍFICOS (Interface Simplificada)
-  // =============================================
-  
+
+  // ======================================================
+  // MÉTODOS ESPECÍFICOS DE LOG
+  // ======================================================
+
   /**
    * Registra login bem-sucedido
    */
-  static async logLogin(userId, clientId, req) {
+  static async logLogin(userId, clientId, req, authMethod = null) {
     await this.logEvent({
       userId,
       clientId,
       eventType: "login",
+      authMethod,
       status: "success",
       ip: this.getIP(req),
       userAgent: req.headers["user-agent"]
     });
   }
-  
+
   /**
    * Registra tentativa de login falha
    */
-  static async logLoginFailure(username, req, reason) {
+  static async logLoginFailure(
+    username,
+    clientId,
+    req,
+    reason,
+    authMethod = null
+  ) {
     await this.logEvent({
+      clientId,
       eventType: "login",
+      authMethod,
       status: "error",
       errorMessage: reason,
       ip: this.getIP(req),
@@ -204,43 +221,54 @@ class AuditLogger {
       metadata: { attempted_username: username }
     });
   }
-  
+
   /**
    * Registra execução de ferramenta (tool)
    */
-  static async logToolCall(userId, clientId, sessionId, toolName, args, result, req, startTime) {
-    const durationMs = Date.now() - startTime;
-    
-    // Resumo do resultado (não o resultado completo)
+  static async logToolCall(
+    userId,
+    clientId,
+    sessionId,
+    toolName,
+    args,
+    result,
+    durationMs,
+    req
+  ) {
     let resultSummary = null;
-    if (result.isError) {
-      resultSummary = result.content?.[0]?.text?.substring(0, 500);
-    } else {
-      const itemCount = result.content?.length || 0;
-      resultSummary = `Success - ${itemCount} items returned`;
-    }
+
     
-    // Sanitizar argumentos
+    if (result && typeof result === "object") {
+      if (result.isError) {
+        const text = result.content?.[0]?.text || JSON.stringify(result);
+        resultSummary = this.truncate(text, 500);
+      } else {
+        const itemCount = result.content?.length || 0;
+        resultSummary = `Success - ${itemCount} items returned`;
+      }
+    } 
+    resultSummary = "Success";
+
     const safeArgs = this.sanitize(args);
-    
+
     await this.logEvent({
       userId,
       clientId,
       sessionId,
       eventType: "tool_call",
       toolName,
+      durationMs,
+      status: result?.isError ? "error" : "success",
+      errorMessage: result?.isError ? result?.content?.[0]?.text : null,
       ip: this.getIP(req),
       userAgent: req.headers["user-agent"],
-      durationMs,
-      status: result.isError ? "error" : "success",
-      errorMessage: result.isError ? resultSummary : null,
       metadata: {
         args: safeArgs,
-        result_items: result.content?.length || 0
+        resultSummary
       }
     });
   }
-  
+
   /**
    * Registra refresh de token
    */
@@ -254,44 +282,30 @@ class AuditLogger {
       userAgent: req.headers["user-agent"]
     });
   }
-  
+
   /**
-   * Registra erro genérico do sistema
+   * Registra erro genérico
    */
-  static async logError(error, req, context = {}) {
+  static async logError(userId, clientId, sessionId, error, metadata = {}) {
     await this.logEvent({
-      userId: context.userId || null,
-      clientId: context.clientId || null,
-      sessionId: context.sessionId || null,
+      userId,
+      clientId,
+      sessionId,
       eventType: "error",
       status: "error",
-      errorMessage: error.message || String(error),
-      ip: this.getIP(req),
-      userAgent: req.headers["user-agent"],
-      metadata: {
-        stack: error.stack?.substring(0, 500),
-        context
-      }
+      errorMessage: error?.message || String(error),
+      metadata
     });
   }
 }
 
-// =============================================
-// GRACEFUL SHUTDOWN (Flush ao encerrar)
-// =============================================
-
-process.on("SIGTERM", async () => {
-  console.log("📊 Flushing audit logs antes de encerrar...");
-  await AuditLogger.flush();
+// Flush ao encerrar o processo
+process.on("SIGTERM", () => {
+  AuditLogger.flush().finally(() => process.exit(0));
 });
 
-process.on("SIGINT", async () => {
-  console.log("📊 Flushing audit logs antes de encerrar...");
-  await AuditLogger.flush();
+process.on("SIGINT", () => {
+  AuditLogger.flush().finally(() => process.exit(0));
 });
-
-// =============================================
-// EXPORTS
-// =============================================
 
 module.exports = AuditLogger;
