@@ -30,6 +30,7 @@ const tools = [
     Query Construction Rules:
     - Use only the tables and columns provided by 'fetch_well_database_schema'.
     - Do not infer or invent additional structures.
+    - If the tool's return value has "truncated" equal to true, notify the user that they did not receive all the data and suggest they ask a more specific question.
     - Use ILIKE and unaccent() for string comparisons (case-insensitive, accent-insensitive).
     - Do not include semicolons.
     - Use fully qualified or quoted column names where ambiguity is possible.`,
@@ -137,6 +138,15 @@ const tools = [
       },
       required: ["wellName", "items"]
     }
+  },
+  {
+    name: "return_base64_test_file",
+    description: "Returns a hardcoded Base64-encoded TXT file for testing binary/file handling in the client.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
   }
 ];
 
@@ -218,11 +228,21 @@ async function executeTool(toolName, args = {}, queryFn, accessToken) {
         console.log("   📊 Executando query no banco...");
         const data = await queryFn(sql);
         console.log(`   ✅ Query executada: ${data.length} registros`);
-          
+
+        const MAX_ROWS = 200;        // por exemplo
+        const truncated = data.length > MAX_ROWS;
+        const rows = truncated ? data.slice(0, MAX_ROWS) : data;
+
+        const payload = {
+          rows,
+          truncated,
+          total_rows: data.length
+        };
+
         return { 
           content: [{ 
             type: "text", 
-            text: JSON.stringify(data, null, 2) 
+            text: JSON.stringify(payload, null, 2) 
           }],
           isError: false
         };
@@ -413,7 +433,26 @@ async function executeTool(toolName, args = {}, queryFn, accessToken) {
         };
       }
     }
-      
+
+    case "return_base64_test_file": {
+      console.log("   📄 Returning hardcoded Base64 TXT test file");
+
+      // Conteúdo: "Este é um arquivo TXT de teste via MCP!"
+      const base64Data = "RXN0ZSBzw6kgdW0gYXJxdWl2byBUWFQgZGUgdGVzdGUgdmEhIE1DUCE=";
+
+      return {
+        content: [{
+          type: "image",                     // MCP só aceita "text" ou "image"
+          data: base64Data,                  // Base64 do TXT
+          mimeType: "text/plain",            // diz ao cliente o tipo REAL do arquivo
+          annotations: {
+            audience: ["user"]
+          }
+        }],
+        isError: false
+      };
+    }
+
     default:
       throw new Error(`Ferramenta não encontrada: ${toolName}`);
     }
