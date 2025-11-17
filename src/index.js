@@ -1,12 +1,12 @@
 const { getHomePage, getMcpTutorialPage } = require("../utils/templates");
 const { setupOAuthEndpoints } = require("./oauth_endpoints");
-const { query, isConnected } = require("./database");
+const { query: queryFn, isConnected } = require("./database");
 const sessionManager = require("./session_manager");
 const { createMcpServer, toolsCount } = require("./mcp_server");
 const { cleanupExpired } = require("./oauth_storage");
 const AuditLogger = require("./audit_logger");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
-const { requestContext, getAccessToken } = require("./context");
+const { requestContext, getAccessToken: getAccessTokenFn } = require("./context");
 
 require("dotenv").config();
 
@@ -50,7 +50,7 @@ const { validateToken } = setupOAuthEndpoints(app);
 // CRIAR MCP SERVER
 // ===============================================
 
-const mcpServer = createMcpServer(query, getAccessToken);
+const mcpServer = createMcpServer(queryFn, getAccessTokenFn);
 
 // ===============================================
 // ROTAS BÁSICAS

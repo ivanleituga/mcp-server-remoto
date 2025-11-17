@@ -5,7 +5,7 @@ const AuditLogger = require("./audit_logger");
 const { requestContext } = require("./context");
 
 // Criar instância do servidor MCP
-function createMcpServer(queryFunction, getAccessTokenFn) {
+function createMcpServer(queryFn, getAccessTokenFn) {
   const server = new Server({
     name: "mcp-well-database",
     version: "1.0.0",
@@ -59,7 +59,7 @@ function createMcpServer(queryFunction, getAccessTokenFn) {
       // Obter access token do contexto
       const accessToken = getAccessTokenFn ? getAccessTokenFn() : null;
       
-      const result = await executeTool(toolName, args, queryFunction, accessToken);
+      const result = await executeTool(toolName, args, queryFn, accessToken);
       console.log("   ✅ Tool executada com sucesso");
       
       // Log de tool call bem-sucedida
