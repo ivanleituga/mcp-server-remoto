@@ -757,7 +757,8 @@ CREATE TABLE basinfiles_view (
   "URL de Download" TEXT
 );
 
--- Tabela contendo informações sobre os arquivos disponíveis referentes aos poços
+-- Tabela contendo informações sobre os arquivos disponíveis referentes aos poços. Única tabela que contém TODOS os poços
+disponibilizados pela ANP, já que as outras tabelas são baseadas apenas nos poços que têm arquivos AGP.
 CREATE TABLE wellfiles_view (
   "ID" INT,
   "Poço" TEXT,
